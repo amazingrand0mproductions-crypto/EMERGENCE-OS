@@ -18,23 +18,30 @@ const modifier = (text) => {
       // updated directly from the story text in the Output hook.
       EmergenceEngine.runPeriodicMaintenance(turnCount, safeText);
 
-      const profileNudge = EmergenceEngine.buildProfileNudge();
-      const romanceNudge = EmergenceEngine.buildRomanceNudge();
-      const securityNudge = EmergenceEngine.buildSecurityNudge();
-      const reflectionNudge = EmergenceEngine.attemptAskReflection(turnCount, sceneNames);
-      const npcNote = EmergenceEngine.buildNpcNote();
-      // Priority-packed instead of concatenate-then-truncate. Profile-fill is
-      // a direct response to an explicit player command (/card), so it ranks
-      // first. Romance/Security nudges are one-shot with no retry - miss them
-      // once and that moment's gone for good - so they rank above the routine
-      // reflection/color-note items, which will simply try again later.
-      notes = EmergenceEngine.packByPriority([
-        { text: profileNudge, priority: 1 },
-        { text: romanceNudge, priority: 2 },
-        { text: securityNudge, priority: 2 },
-        { text: reflectionNudge, priority: 3 },
-        { text: npcNote, priority: 4 }
-      ], 1200);
+      // ProtectAuthorsNote is a full stop, not just NpcColorNotes' routine
+      // per-turn note - it also skips profile-fill/romance/security/reflection
+      // requests entirely, rather than computing them and discarding the
+      // result, so their limited retry attempts aren't silently burned while
+      // this is on.
+      if (state.emergence.config.ProtectAuthorsNote !== "Enabled") {
+        const profileNudge = EmergenceEngine.buildProfileNudge();
+        const romanceNudge = EmergenceEngine.buildRomanceNudge();
+        const securityNudge = EmergenceEngine.buildSecurityNudge();
+        const reflectionNudge = EmergenceEngine.attemptAskReflection(turnCount, sceneNames);
+        const npcNote = EmergenceEngine.buildNpcNote();
+        // Priority-packed instead of concatenate-then-truncate. Profile-fill is
+        // a direct response to an explicit player command (/card), so it ranks
+        // first. Romance/Security nudges are one-shot with no retry - miss them
+        // once and that moment's gone for good - so they rank above the routine
+        // reflection/color-note items, which will simply try again later.
+        notes = EmergenceEngine.packByPriority([
+          { text: profileNudge, priority: 1 },
+          { text: romanceNudge, priority: 2 },
+          { text: securityNudge, priority: 2 },
+          { text: reflectionNudge, priority: 3 },
+          { text: npcNote, priority: 4 }
+        ], 1200);
+      }
     }
 
     const directive = EmergenceEngine.buildDirective();

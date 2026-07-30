@@ -50,7 +50,7 @@ class EmergenceEngine {
       LivingWorldEngine: "Enabled", ProtagonistInvolvement: "Medium", ConsequenceSeverity: "Hardcore",
       DialogueStyle: "Raw & Gritty", NPCBrainSystem: "Enabled",
       ReflectionSystem: "Disabled", ReflectionInterval: "6", ReflectionChance: "50", RomancePacing: "Normal",
-      NpcColorNotes: "Enabled"
+      NpcColorNotes: "Enabled", ProtectAuthorsNote: "Disabled"
     };
 
     for (let key in defaultCfg) {
@@ -314,6 +314,7 @@ HumanAgency: Enabled | Disabled - lets NPCs resist, doubt, or walk away instead 
 PsychologicalRealism: Standard | Advanced | Raw Human - Raw Human prompts subconscious motivation to leak through in prose and Reflections; Standard keeps things more surface-level and conventional.
 PhysicalQuirks: High | Moderate | Off - how often the narrator is prompted to weave in micro-tells (clenched jaws, avoided eye contact, shallow breathing) into descriptions. Off means plainer, less physically-detailed prose.
 NpcColorNotes: Enabled | Disabled - the compact per-turn NPC status note (threat state, bias, feelings) sent to the narrator each turn. It's hidden from the story itself either way; this only controls whether it's generated at all, for anyone who checks their context breakdown and would rather not see it there.
+ProtectAuthorsNote: Enabled | Disabled - a full stop, broader than NpcColorNotes above. If you've typed your own custom Author's Note in AI Dungeon's own story settings and want it left completely alone, set this to Enabled - the script will never touch that field at all, for any reason. The tradeoff: you also lose the romance/Earned Security "let this show" nudges, AI-authored profile-fill requests, and reflection requests while this is on, since those all use that same field. Off by default.
 InnerSelfSystem: Enabled | Disabled - whether each NPC's hidden Goal/Secret/Belief surface on their character card via /card, instead of staying entirely internal.
 
 -- TRUST, GRUDGE & CONSEQUENCES --
@@ -353,7 +354,7 @@ Type /help for the full command list, or /settings for a shorter version of this
 
         this.createStoryCard(
           "master_world_config",
-          `[WORLD CONFIG]\nGenre: Modern\nInnerSelfSystem: Enabled\nLivingWorldEngine: Enabled\nProtagonistInvolvement: Medium\nRomanceEngine: 18+ Unrestricted\nJealousyMechanic: Enabled\nConsequenceSeverity: Hardcore\nDialogueStyle: Raw & Gritty\nNPCBrainSystem: Enabled\nLocationCards: Enabled\nLocationAutoUpdate: Enabled\nGrudgeTracking: Enabled\nWorldTensionEngine: Dynamic\nPlayerTrauma: Enabled\nAutonomyLevel: High\nPsychologicalRealism: Raw Human\nHumanAgency: Enabled\nPhysicalQuirks: High\nNpcColorNotes: Enabled\nMatureContent: 18+ Unrestricted\nGraphicRealism: Unfiltered\nReflectionSystem: Disabled\nReflectionInterval: 6\nReflectionChance: 50\nRomancePacing: Normal`,
+          `[WORLD CONFIG]\nGenre: Modern\nInnerSelfSystem: Enabled\nLivingWorldEngine: Enabled\nProtagonistInvolvement: Medium\nRomanceEngine: 18+ Unrestricted\nJealousyMechanic: Enabled\nConsequenceSeverity: Hardcore\nDialogueStyle: Raw & Gritty\nNPCBrainSystem: Enabled\nLocationCards: Enabled\nLocationAutoUpdate: Enabled\nGrudgeTracking: Enabled\nWorldTensionEngine: Dynamic\nPlayerTrauma: Enabled\nAutonomyLevel: High\nPsychologicalRealism: Raw Human\nHumanAgency: Enabled\nPhysicalQuirks: High\nNpcColorNotes: Enabled\nProtectAuthorsNote: Disabled\nMatureContent: 18+ Unrestricted\nGraphicRealism: Unfiltered\nReflectionSystem: Disabled\nReflectionInterval: 6\nReflectionChance: 50\nRomancePacing: Normal`,
           "Custom",
           "Master World Config",
           notesStr
@@ -401,7 +402,7 @@ Type /help for the full command list, or /settings for a shorter version of this
     }
 
     if (cmd.startsWith('/settings')) {
-      return "🎛️ SETTINGS (edit on the Master World Config card):\nNPCBrainSystem: Enabled|Disabled - master switch for per-NPC psychology (incl. Earned Security)\nAutonomyLevel: Low|Medium|High|Unchained - pushback strength | HumanAgency: Enabled|Disabled\nPsychologicalRealism: Standard|Advanced|Raw Human | PhysicalQuirks: High|Moderate|Off\nNpcColorNotes: Enabled|Disabled - hide the per-turn NPC status note from your context breakdown\nInnerSelfSystem: Enabled|Disabled - Goal/Secret/Belief on character cards\nGrudgeTracking: Enabled|Disabled | ConsequenceSeverity: Mild|Moderate|Hardcore\nLivingWorldEngine: Enabled|Disabled - master switch for Undercurrents/Coalitions/Reputation\nJealousyMechanic, RomanceEngine, RomancePacing - relationship settings\nWorldTensionEngine (also drives Emotional Contagion), PlayerTrauma, LocationCards, LocationAutoUpdate\nReflectionSystem (off by default), ReflectionInterval, ReflectionChance - private reflections\nProtagonistInvolvement: Low|Medium|High|Always | MatureContent, GraphicRealism - content\nFull grouped explanations are in the Master World Config card's notes.";
+      return "🎛️ SETTINGS (edit on the Master World Config card):\nNPCBrainSystem: Enabled|Disabled - master switch for per-NPC psychology (incl. Earned Security)\nAutonomyLevel: Low|Medium|High|Unchained - pushback strength | HumanAgency: Enabled|Disabled\nPsychologicalRealism: Standard|Advanced|Raw Human | PhysicalQuirks: High|Moderate|Off\nNpcColorNotes: Enabled|Disabled - hide the per-turn NPC status note from your context breakdown\nProtectAuthorsNote: Enabled|Disabled - never touch your own custom Author's Note at all (costs you the romance/security/profile-fill/reflection nudges)\nInnerSelfSystem: Enabled|Disabled - Goal/Secret/Belief on character cards\nGrudgeTracking: Enabled|Disabled | ConsequenceSeverity: Mild|Moderate|Hardcore\nLivingWorldEngine: Enabled|Disabled - master switch for Undercurrents/Coalitions/Reputation\nJealousyMechanic, RomanceEngine, RomancePacing - relationship settings\nWorldTensionEngine (also drives Emotional Contagion), PlayerTrauma, LocationCards, LocationAutoUpdate\nReflectionSystem (off by default), ReflectionInterval, ReflectionChance - private reflections\nProtagonistInvolvement: Low|Medium|High|Always | MatureContent, GraphicRealism - content\nFull grouped explanations are in the Master World Config card's notes.";
     }
 
     if (cmd.startsWith('/loc ')) {
@@ -862,7 +863,15 @@ Type /help for the full command list, or /settings for a shorter version of this
       "Indeed", "Certainly", "Obviously", "Clearly", "Slowly", "Quickly", "Quietly",
       "Silently", "Immediately", "Soon", "Later", "Again", "Already", "Almost", "Just",
       "Only", "Rather", "Nearly", "Yes", "No", "Well", "Okay", "Ah", "Oh", "Hey", "Wait",
-      "Look", "Listen", "Morning", "Night", "Evening", "Afternoon", "Today", "Tomorrow", "Yesterday"
+      "Look", "Listen", "Morning", "Night", "Evening", "Afternoon", "Today", "Tomorrow", "Yesterday",
+      // Body parts and emotion/sensation nouns that intense or intimate prose
+      // often uses as short, standalone sentence-openers for dramatic effect,
+      // without ever meaning to introduce a new character.
+      "Lips", "Eyes", "Hands", "Fingers", "Skin", "Heart", "Chest", "Neck", "Hair", "Face", "Mouth",
+      "Nose", "Throat", "Shoulders", "Back", "Waist", "Breath", "Breathing",
+      "Passion", "Pleasure", "Sadness", "Desire", "Fear", "Anger", "Rage", "Joy", "Terror", "Panic",
+      "Silence", "Darkness", "Warmth", "Heat", "Longing", "Need", "Want", "Lust", "Love", "Hate",
+      "Grief", "Shock", "Relief", "Ecstasy"
     ];
 
     const found = this.scanCapitalizedWords(text);
@@ -883,7 +892,11 @@ Type /help for the full command list, or /settings for a shorter version of this
       // Promote immediately on a genuine mid-sentence sighting (a strong signal),
       // or as a last resort after several sentence-initial mentions, so a real
       // name mentioned only at sentence starts is still eventually caught.
-      if (cands[m].mid || cands[m].count >= 5) {
+      // Raised from 5: short, punchy sentence-opener prose ("Lips met.
+      // Passion ignited. Pleasure built.") - common in intense or intimate
+      // scenes - can repeat a word as a sentence-starter well past 5 times in
+      // a single scene without it ever being a real character.
+      if (cands[m].mid || cands[m].count >= 8) {
         this.initializeNPC(m);
         delete cands[m];
       }
