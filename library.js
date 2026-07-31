@@ -661,14 +661,19 @@ Type /help for the full command list, or /settings for a shorter version of this
     const invalidLocs = ["Door", "Table", "Room", "House", "City", "Street", "Car", "Morning", "Night",
       "Shadows", "Sun", "Moon", "He", "She", "It", "They", "We", "His", "Her", "Your", "My", "Our",
       "Their", "Its", "Him", "Them", "This", "That", "These", "Those", "Something", "Someone",
-      "Everyone", "Everything", "Nothing", "Anybody", "Anyone"];
+      "Everyone", "Everything", "Nothing", "Anybody", "Anyone",
+      // Clothing/wearables - "wrapped in a Bathrobe" or "dressed in a Coat" match
+      // the exact same "in a [Capitalized Word]" pattern a genuine location does.
+      "Bathrobe", "Robe", "Coat", "Jacket", "Dress", "Shirt", "Pants", "Blanket", "Towel", "Sheets",
+      "Gown", "Suit", "Cloak", "Nightgown", "Pajamas", "Sweater", "Hoodie", "Uniform", "Armor",
+      "Cape", "Veil", "Shawl", "Kimono", "Vest", "Lingerie", "Underwear"];
 
     // Three complementary patterns, since a place can be introduced several ways:
     //   "you enter the Cafe"          - preposition + the/a/an + Name
     //   "the city of Larion"          - place-noun + of + Name (name comes AFTER)
     //   "Larion City" / "Neo Academy" - Name + place-noun (name comes BEFORE)
     const patterns = [
-      /\b(?:in|into|at|inside|enters?|entering|approaching|towards|arriving at|reach(?:es|ed)?|explore) (?:the |a |an )?([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\b/g,
+      /\b(?:in|into|at|inside|enter(?:s|ed|ing)?|approach(?:es|ed|ing)?|towards|arriv(?:e|es|ed|ing) at|reach(?:es|ed|ing)?|explor(?:e|es|ed|ing)?) (?:the |a |an )?([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\b/g,
       /\b(?:[Cc]ity|[Tt]own|[Vv]illage|[Kk]ingdom|[Rr]ealm|[Ll]and|[Nn]ation|[Rr]egion|[Dd]istrict|[Pp]rovince|[Ww]orld|[Pp]lanet|[Ii]sland|[Vv]alley|[Ff]orest|[Ss]tate|[Cc]ountry|[Ee]mpire|[Cc]astle|[Tt]emple|[Aa]cademy|[Gg]uild|[Tt]avern|[Ii]nn|[Tt]ower|[Ff]ortress|[Pp]alace) of (?:the |a |an )?([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\b/g,
       /\b([A-Z][a-z]+(?:\s[A-Z][a-z]+)?) (?:City|Town|Village|Kingdom|Realm|Academy|Tavern|Inn|Tower|Fortress|Palace|Castle)\b/g
     ];
@@ -1467,6 +1472,13 @@ Type /help for the full command list, or /settings for a shorter version of this
     // never truncated/reduced like Story Cards or Author's Note are - it's the
     // one field the platform can't gracefully trim on its own. Kept terse.
     let d = `[EOS | Genre:${state.emergence.config.Genre} Style:${state.emergence.config.DialogueStyle}]\n`;
+    // A standing reinforcement of player agency, not just NPC flavor. This
+    // can't guarantee compliance - that ultimately depends on the underlying
+    // AI model, not any script - but Front Memory is the one field that's
+    // never trimmed and sits closest to where generation actually begins, so
+    // it's the most reliable place a script can reinforce a rule the player
+    // likely already has elsewhere (AI Instructions, their own Author's Note).
+    d += `[Never write dialogue or actions for the player - describe only what NPCs and the world do in response.]\n`;
 
     let flags = [];
     if (state.emergence.config.MatureContent === "18+ Unrestricted") flags.push("18+ content");
