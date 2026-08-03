@@ -178,10 +178,25 @@ class EmergenceEngine {
   // write-back handlers - one place instead of the same find() repeated at
   // every call site. Returns the NPC's actual stored key (correct casing) or
   // null.
+  // Case-insensitive NPC lookup, used by nearly every command and the tag
+  // write-back handlers - one place instead of the same find() repeated at
+  // every call site. Returns the NPC's actual stored key (correct casing) or
+  // null. Forgiving of how people actually type on mobile: trailing
+  // punctuation ("Sunday.") and a natural extra word ("Sunday please") both
+  // used to make an exact, otherwise-correct name fail to match at all.
   static findNpcByName(name) {
     if (!name) return null;
-    const target = String(name).toLowerCase();
-    return Object.keys(state.world.npcs).find(n => n.toLowerCase() === target) || null;
+    const stripPunct = (s) => s.replace(/[.!?,;:]+$/, '');
+    const target = stripPunct(String(name).toLowerCase().trim());
+    if (!target) return null;
+    let found = Object.keys(state.world.npcs).find(n => n.toLowerCase() === target);
+    if (found) return found;
+    const firstWord = stripPunct(target.split(/\s+/)[0] || '');
+    if (firstWord && firstWord !== target) {
+      found = Object.keys(state.world.npcs).find(n => n.toLowerCase() === firstWord);
+      if (found) return found;
+    }
+    return null;
   }
 
   // A short, concrete excerpt of the actual moment, so a memory reads as
@@ -825,6 +840,12 @@ Type /help for the full command list, or /settings for a shorter version of this
     const re = /\b([A-Z][a-z]{2,10})\b/g;
     let m;
     while ((m = re.exec(text)) !== null) {
+      // A word directly glued to a hyphen or slash with no space at all
+      // ("Sci-Fi", "Poli/Sci") is the second half of a compound word or
+      // abbreviation, not genuinely mid-sentence evidence on its own - treat
+      // it the same cautious way as crossing a quote mark.
+      const joinedChar = m.index > 0 ? text[m.index - 1] : null;
+      let glued = joinedChar === '-' || joinedChar === '/';
       let i = m.index - 1;
       let crossedQuote = false;
       while (i >= 0 && /[\s"'\u2018\u2019\u201C\u201D]/.test(text[i])) {
@@ -838,7 +859,7 @@ Type /help for the full command list, or /settings for a shorter version of this
       // character right before the quote is just a comma. Without this, the
       // first word of nearly any line of dialogue was being read as a
       // confirmed mid-sentence proper noun and instantly promoted to an NPC.
-      const sentenceInitial = (prevChar === null) || /[.!?]/.test(prevChar) || crossedQuote;
+      const sentenceInitial = (prevChar === null) || /[.!?]/.test(prevChar) || crossedQuote || glued;
       results.push({ word: m[1], sentenceInitial: sentenceInitial });
     }
     return results;
@@ -869,6 +890,7 @@ Type /help for the full command list, or /settings for a shorter version of this
       "Silently", "Immediately", "Soon", "Later", "Again", "Already", "Almost", "Just",
       "Only", "Rather", "Nearly", "Yes", "No", "Well", "Okay", "Ah", "Oh", "Hey", "Wait",
       "Look", "Listen", "Morning", "Night", "Evening", "Afternoon", "Today", "Tomorrow", "Yesterday",
+      "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
       // Body parts and emotion/sensation nouns that intense or intimate prose
       // often uses as short, standalone sentence-openers for dramatic effect,
       // without ever meaning to introduce a new character.
@@ -890,18 +912,22 @@ Type /help for the full command list, or /settings for a shorter version of this
       if (ignore.includes(m) || state.world.npcs[m] || state.world.locations[m]) return;
       if (Object.keys(state.world.npcs).length >= 25) return;
 
-      if (!cands[m]) cands[m] = { count: 0, mid: false };
+      if (!cands[m]) cands[m] = { count: 0, midCount: 0 };
       cands[m].count++;
-      if (!f.sentenceInitial) cands[m].mid = true;
+      if (!f.sentenceInitial) cands[m].midCount++;
 
-      // Promote immediately on a genuine mid-sentence sighting (a strong signal),
-      // or as a last resort after several sentence-initial mentions, so a real
-      // name mentioned only at sentence starts is still eventually caught.
-      // Raised from 5: short, punchy sentence-opener prose ("Lips met.
+      // Promote after a SECOND genuine mid-sentence sighting, not the first -
+      // one flukey mid-sentence read from some edge case not yet covered
+      // shouldn't be enough on its own to create a phantom NPC, but a real
+      // character will naturally get referenced mid-sentence more than once
+      // within just a couple of exchanges, so this barely slows down genuine
+      // detection. Sentence-initial-only fallback stays as a last resort, so
+      // a real name mentioned only at sentence starts is still eventually
+      // caught. Raised from 5: short, punchy sentence-opener prose ("Lips met.
       // Passion ignited. Pleasure built.") - common in intense or intimate
       // scenes - can repeat a word as a sentence-starter well past 5 times in
       // a single scene without it ever being a real character.
-      if (cands[m].mid || cands[m].count >= 8) {
+      if (cands[m].midCount >= 2 || cands[m].count >= 8) {
         this.initializeNPC(m);
         delete cands[m];
       }
