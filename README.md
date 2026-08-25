@@ -1,175 +1,493 @@
-# EMERGENCE-OS
-EMERGENCE OS 1 — Independent NPCs, Trust &amp; Grudges, and Auto-Updating Location Cards
-Hey everyone, dropping [REBUILT] EMERGENCE OS 1 — Independent NPCs, Trust & Grudges, and Auto-Updating Location Cards for AI Dungeon.
+# ⚙️ **EMERGENCE OS**
 
-If you're tired of NPCs acting like mind-controlled puppets who obey every command, forget everything the moment the scene changes, and wait around for you to lead every beat, this script turns them into actual people — with motives, memories of specific things that actually happened, a real place they were last seen, and drama with each other that has nothing to do with you.
+### **Independent NPCs • Persistent relationships • Living locations • Consequences that survive the scene**
 
-Zero technical setup required — on your very first action, it auto-creates a Master World Config story card in your deck, with every single setting explained and grouped by what it actually affects (Story Tone, NPC Psychology, Trust & Grudge, Relationships, World & Locations, Reflections, Pacing, Content) right there in its notes — not just a list of allowed values, but what you'd actually notice change in play if you touched it — so you can tweak anything mid-game without guessing.
+**EMERGENCE OS** is a living-world scripting engine for AI Dungeon built around one idea: **the story should remember what actually happened.**
 
-New to AI Dungeon scripts? Two quick things before the feature list:
+🔗 **GitHub:** https://github.com/amazingrand0mproductions-crypto/EMERGENCE-OS
 
-•	⁠A script is just a small program attached to your scenario that quietly reacts to the story as you play — you never see code, you never write any, you just paste it in once and it runs itself from then on.
-•	⁠A Story Card is AI Dungeon's own built-in way of giving the AI a "note" about a character, place, or thing, which it automatically reads whenever that name comes up in the story. This script creates and updates those cards for you automatically.
+> **Four hooks. One persistent world. No required commands.**
 
-You genuinely don't need to know how any of that works to use this — copy, paste, play. Full click-by-click steps are at the bottom of this post.
 
-Here's the full run-through:
+You play normally. EMERGENCE OS watches for confirmed characters, places and meaningful interactions, keeps the persistent state bounded, and feeds the narrator only the pieces that matter to the current scene. NPCs can carry boundaries, loyalties, grudges, attraction, memories and relationships forward instead of behaving like disposable scene props.
 
-🧠 1. Human Agency & Anti-Railroading
+> **No required commands. No hand-building every NPC. No random “secret generator” deciding a stranger is secretly a traitor because their name appeared once.**
 
-•	⁠NPC Pushback: Characters will actively resist unearned demands, doubt your motives, call you out, or walk away if you try to command or manipulate them without leverage.
-•	⁠Tunable intensity: AutonomyLevel (Low/Medium/High/Unchained) scales exactly how hard that pushback lands — and it's contextual, not flat: an NPC who already resents you escalates faster, while deep earned trust buys a little more benefit of the doubt for the same forceful moment.
-•	⁠Cognitive Biases: NPCs process your actions through irrational personal lenses (Paranoid, Deflective, Prideful, Impulsive, Skeptical) rather than acting like logical robots — and they don't all warm up to you at the same speed: a Skeptical or Paranoid NPC makes you earn trust; an Impulsive one gives it fast.
+### 🚀 **Start here**
 
-🩸 2. Persistent Trust & Grudge Tracking
+- **Installing it?** Jump to **Installation**.
+- **Tuning it?** Read **Configuration** or open the generated Config Story Card.
+- **Checking what it remembers?** Use `/help`, `/npc NAME`, `/world` or `/undercurrents`.
+- **Want the project/source?** https://github.com/amazingrand0mproductions-crypto/EMERGENCE-OS
+- **Testing changes locally?** Run `node test_harness.js`.
 
-•	⁠Tracks separate Trust and Grudge levels. If you insult or betray an NPC, they won't just forget it a few turns later — their resentment lingers as coldness, passive-aggression, or outright hostility.
-•	⁠ConsequenceSeverity (Mild/Moderate/Hardcore) controls exactly how hard betrayal and lying land.
-•	⁠Grudge isn't a one-way ratchet, either — it softens slowly over time if nothing reinforces it, the way real anger fades even when trust still has to be earned back on purpose.
-•	⁠Formative Memories: most memories cycle out after a few turns, but a genuinely pivotal moment — a betrayal severe enough to break real trust, a full emotional breakdown, falling completely in love — gets remembered permanently and separately, visible on /npc and their character card. Not everything is equally forgettable.
-•	⁠Memories are concrete, not categories. An NPC doesn't just remember that you "forced them" — they remember it happening: a short excerpt of the actual moment gets saved alongside it, so their memory reads like something that really occurred instead of a generic status flag.
-•	⁠Earned Security. This one's grounded in actual attachment research (Mikulincer & Shaver's work on "earned security"): a sustained pattern of real trust and low grudge — not one good scene, a genuine streak of it — can shift an NPC's attachment style toward Secure over time. It's one-directional and permanent, the same way the research frames it: earned through the relationship, not handed out, and not undone by a single bad turn. Progress shows up on /npc once it's underway, so it's not an invisible countdown — and the moment it actually happens, the narrator gets a nudge to let it show through the story itself, not just sit in the background data.
-•	⁠NPCs remember specific incidents with each other, too, not just with you — a clash, a kindness, surviving danger together with another NPC gets logged the same way a moment with you does.
-•	⁠Grounded in a real place and time: every NPC tracks where and when they were last actually present. /npc shows it, and if a real gap has passed since they last crossed paths with you, the narrator gets nudged to let that gap actually register instead of picking up as if no time passed.
+---
 
-🎭 3. Realistic Threat Psychology & Body Language
+## ✨ **What changed in this rebuild**
 
-•	⁠Polyvagal Threat States: NPCs dynamically shift between Composed, Fight, Flight, Freeze, or Fawn based on their stress and fear — shaped by attachment style as much as cognitive bias, so an Avoidant NPC shuts down (Freeze) under the same pressure that sends an Anxious one people-pleasing (Fawn) instead of fighting or fleeing. The severity ordering follows the actual research too, not just the four labels: Freeze reflects the nervous system's most extreme shutdown state, so it's reserved for the highest-stress tier rather than being an equal alternative to fight or flight at any stress level.
-•	⁠NPCs react to real danger around them, too, not just to you personally — an explosion in the room raises their own stress and can push them into crisis, the same as a direct confrontation would.
-•	⁠Emotional Contagion: when an NPC's composure genuinely breaks in front of others, whoever's actually there to witness it gets visibly rattled too — a real, documented phenomenon (Hatfield, Cacioppo & Rapson's work on emotional contagion), not just a story beat. Small and bounded so it can't spiral into a runaway panic cascade.
-•	⁠Ego Depletion: When an NPC gets worn down (Ego < 30%), their social filter collapses, forcing them to blurt out secrets, panic, or prioritize immediate self-preservation — and it recovers naturally over time once they're no longer under active pressure, instead of staying broken until you say the exact right thing.
-•	⁠All of this gets summarized for the narrator each turn as a short status note (threat state, bias, current feelings) — invisible in the story itself, but visible if you check your context breakdown, which some people would rather not see. Set NpcColorNotes: Disabled on the config card to turn that note off entirely; every mechanic underneath keeps working exactly the same, it's purely about what shows up in that panel.
-•	⁠Physical Micro-Tells: Prompts the model to weave subconscious physical habits (clenched jaws, avoiding eye contact, shallow breathing) into dialogue and descriptions — tunable via PhysicalQuirks, with PsychologicalRealism: Raw Human pushing subconscious motivation to leak through even further.
+This is not a cosmetic cleanup of the old script. The tracking and card architecture has been rebuilt around safer attribution, current AI Dungeon scripting behaviour and lower false-positive risk.
 
-💞 4. Romance Engine
+### 🎯 **Target-aware relationship detection**
 
-•	⁠Attraction builds into real, discrete relationship stages — Platonic → Interested → Flirtatious → Romantic → In Love — instead of a hidden number nobody ever sees.
-•	⁠RomancePacing (Fast / Normal / Slow Burn) controls exactly how quickly feelings develop, and it doesn't ignore the rest of the relationship: attraction grows much slower on an NPC who's currently furious at you, instead of romance and grudge existing in separate universes.
-•	⁠Every time a stage actually shifts, the AI gets a one-time nudge to let it show through behavior and tone in the moment — not a stated label, an earned beat.
-•	⁠Jealousy is no longer just an invisible stat bump: catching feelings for someone while another NPC is watching visibly cools that NPC's Undercurrent toward your new interest, so it has genuine narrative follow-through instead of vanishing the instant the scene changes.
-•	⁠Check standing anytime with /romance (everyone) or /romance [name] (one character), or see it folded right into /npc.
+The old approach could see a word like *kiss*, *insult* or *betray* in a scene and apply it too broadly to every named NPC in that text.
 
-🌊 5. Undercurrents — Passively-Read NPC Relationships
+EMERGENCE OS now breaks player input into clauses, identifies the NPC actually connected to the action, and applies the event to that target.
 
-This is the part I care most about getting right, so let me explain the mechanism, not just the pitch:
+**Example:**
 
-Most "autonomous NPC drama" scripts work the same way underneath: on a schedule, the script picks an NPC and a target, assigns a social pressure from a list, and asks the AI to develop it — then parses a hidden report back to see what happened. It's a request-and-response loop the script initiates.
+> You kiss Elena while Marcus watches.
 
-Undercurrents don't work like that at all. There's no schedule, no cooldown, no "decide to start something," and nothing asks the AI to report back. The script just reads what's already in the story. If two known NPCs are mentioned together in the same passage and something happens between them — a shove, a kindness, a betrayal, a kiss — that's picked up by the same conjugation-aware detection already driving your own Trust & Grudge with each NPC, just applied NPC-to-NPC instead of player-to-NPC. Nothing is invented; nothing is pre-scheduled. If it isn't in the text, it doesn't happen. It's careful about attribution, too — an NPC witnessing something romantic happen between you and someone else doesn't get miscounted as warmth between the two NPCs; that specific case is what Jealousy is for.
+- Elena can gain attraction.
+- Marcus does **not** receive Elena's romance event.
+- Marcus can only react with jealousy if he is **actually present** and already has meaningful romantic interest.
 
-Every NPC can carry Undercurrents toward several other characters at once, not just whichever one they were most recently mentioned alongside — tension with one person doesn't quietly vanish because of an unrelated warm moment with someone else later.
+The same targeting is used for respect, coercion and betrayal.
 
-The psychological layer still applies, but as pure flavor rather than a tracked state machine: how an Undercurrent actually reads in the narrator's prose depends on each NPC's own attachment style — the same warmth score lands as quiet fondness on a Secure NPC, anxious over-attachment on an Anxious one, and something they'd never admit out loud on an Avoidant one.
+### 🧹 **Confidence-based NPC detection**
 
-•	⁠Check any NPC's standing with everyone anytime with /undercurrents or see their strongest one folded into /npc. /reputation rolls it all the way up into a single "how am I doing overall" read across everyone you've met.
-•	⁠Jealousy plugs straight into this: catching feelings for someone in front of another interested NPC doesn't just bump a hidden stat — it visibly cools that NPC's Undercurrent toward your new interest, and how they process the jealousy itself is attachment-style-flavored too (an Anxious NPC spirals; an Avoidant one just quietly shuts down).
-•	⁠Shared danger bonds people, too — surviving chaos together nudges two co-mentioned NPCs' Undercurrent warmer, distinct from a direct conflict or kindness between them.
-•	⁠Like grudge, an Undercurrent softens slowly on its own if nothing reinforces it — tension or warmth between two NPCs isn't permanent unless the story keeps making it true.
+Characters are no longer promoted from one random capitalized word.
 
-🗣️ 6. Word Gets Around
+EMERGENCE OS weighs stronger evidence such as:
 
-Reputation quietly spreads through the social web the other systems already built — this isn't a new engine bolted on, it's Trust/Grudge and Undercurrents talking to each other. If an NPC is a genuine confidant of someone with a much harsher opinion of you, some of that opinion rubs off on them too, slowly and boundedly — and it runs both ways, a confidant vouching for you spreads the same way a warning does. Cross someone badly enough and it can precede you with the people close to them, without anyone scripting a rumor mill.
+- `Marcus says...`
+- speaker labels such as `Marcus:`
+- `a woman named Elena`
+- direct introductions
+- existing Character Story Cards
+- repeated proper-name evidence
 
-🤝 7. Coalitions & Rivalry Blocs
+Weak candidates expire if the story never confirms them.
 
-Nothing new is tracked for this one — it's live graph analysis over the Undercurrents that already exist. If three or more NPCs all hold strong warmth with each other (not just each one liking a fourth person, an actual closed triangle), that's a Coalition. Three or more all holding strong mutual hostility is a Rivalry Bloc. /factions shows what's formed, along with your own average standing with that group — nothing is scripted into existence, and nothing shows up that didn't actually emerge from the story.
+Places get first claim on location-shaped names, and common objects, clothing, vehicles and ordinary sentence words are filtered before they can become NPCs.
 
-🕯️ 8. Location Echoes
+### 🗺️ **Real automatic location cards**
 
-The same threshold that creates a permanent Formative Memory for an NPC also tags where it happened. A place where someone's trust in you shattered, where someone fell for you completely, where someone's composure finally broke — that gets remembered on the location's own Story Card, not just the character's. Places start to carry weight the way people do.
+Confidently detected locations now create their Story Card automatically instead of only existing inside script state until `/loc` was used.
 
-💭 9. Reflections — Private Inner Monologues
+Each place can independently track:
 
-•	⁠Optional, off by default. Turn it on and NPCs will occasionally form one private, first-person reflection about the current moment — grounded in how they're actually feeling right then (their real threat state and cognitive bias), not a generic prompt.
-•	⁠Saved to their own "Private Reflections" card, never shown in the story, never fed back into the AI — just something for you to read back on later to see how a character's headspace actually evolved.
-•	⁠Captured through the same hidden-tag mechanism the script uses for AI-written character profiles, rather than a special leading-line convention — one consistent way of asking the narrator for hidden data, used everywhere it's needed.
+- **Condition** — Intact, Damaged, On Fire, Locked Down, Destroyed
+- **Atmosphere** — derived from condition + world tension
+- **Location Echoes** — up to three important moments attached to that place
+- **Last-seen state**
 
-💥 10. Dynamic World Tension & Player Trauma
+Damage is clause-aware. If one place is damaged and another is intact in the same response, EMERGENCE OS keeps them separate.
 
-•	⁠Global Alert Scale: Gunfire, explosions, and chaos scale World Tension (0–100%), forcing nearby NPCs into cover, panic, or lockdown postures.
-•	⁠Player Sensory Distortions: High player stress (>75%) injects realistic trauma effects into the narrative prose — tunnel vision, muffled audio, racing pulses.
+### 🧠 **Psychology without random diagnoses**
 
-🗺️ 11. Smart Multi-Location Tracking
+New NPCs now begin with **Unclear / Not established** traits instead of being assigned a random attachment style, random cognitive bias, hidden goal and secret on first sight.
 
-•	⁠Tracks every location's condition independently instead of just "wherever you currently are" — burn down the warehouse and the tavern down the street stays untouched.
-•	⁠Clause-aware damage detection: "the warehouse is destroyed, but the tavern's fine" correctly attributes each condition instead of blending them together.
-•	⁠Each location also carries a felt Atmosphere (Calm, Uneasy, On Edge, Tense, Chaotic) derived from its condition and the current tension level — visible on /world and its Story Card.
-•	⁠Auto-updating Story Cards for anywhere you've named, with a clean anti-confusion filter so places never get mistaken for people (or vice versa).
-•	⁠/locations lists everywhere tracked so far with its condition and atmosphere at a glance, marking wherever you currently are.
+Traits can emerge from repeated textual evidence. Unknown profile facts remain unknown rather than being filled with invented lore.
 
-🎬 12. AI-Written Character Sheets
+The defensive-state model is deliberately framed as a **narrative stress heuristic**, not a clinical simulator. It uses readable states such as Composed, Alert, Defensive, Fight, Flight, Freeze and Fawn to help the narrator show pressure through behaviour without claiming to diagnose a character.
 
-•	⁠/card a character and the sheet doesn't sit there with [Define Race] forever — the AI fills it in for you on the next turn. It's a direct request that gets top priority in what the AI sees, and keeps asking across several turns if the first attempt doesn't land. Card several characters back to back and each one gets queued properly instead of the newest one silently bumping the others out.
-•	⁠Recognizes established characters (movies, games, books, whatever) and writes their real profile; invents something fitting and consistent for original characters instead.
-•	⁠Already made your own character cards before installing this? The moment that character actually shows up in the story, their existing card gets adopted into the tracking system — trust, grudge, memories, all of it starts working for them too. Your own lore is never touched or rewritten, not one word of it; the psychological state just gets added in a clearly separate section underneath. AI-authored profile-filling is a completely different path that only ever runs on blank sheets this script created itself via /card — an adopted card never goes through it, so nothing gets invented on top of what you already wrote.
-•	⁠The full picture on any NPC refreshes automatically as things change, not just once — no need to keep re-checking a card to see if it's stale.
+### 🔐 **Safer “earned security” progression**
 
-⚔️ 13. Auto-Genre Adaptation & Unrestricted Realism
+Relationship security can still evolve, but it now advances only through repeated meaningful supportive interactions. Simply standing in the same room with high Trust no longer increments an invisible counter every turn.
 
-•	⁠Automatically scans your story to detect setting/genre and adjusts vocabulary and danger level accordingly.
-•	⁠Toggles for uncensored 18+ narrative prose, gritty combat damage, and unfiltered dialogue tone.
+This is treated as a **story progression mechanic inspired by attachment research**, not as a claim that real attachment change follows a simple permanent counter.
 
-🧹 14. Cleaner Detection, Fewer Ghosts
+### 💾 **Story Card ownership protection**
 
-•	⁠Rebuilt name detection so ordinary sentence-starting words ("His," "Your," "Then") stop getting mistaken for characters, and your setting's own city/kingdom name stops getting mistaken for an NPC.
-•	⁠New /forget command to manually clear anything that still slips through, and /cleanup now catches names that turn out to double as a location too.
-•	⁠You can also manually add character first names directly in the Master World Config card's notes ([CHARACTERS] section) to integrate them with the script immediately, instead of waiting for auto-detection.
+EMERGENCE OS distinguishes between:
 
-💬 In-Game Commands
+- cards **generated by EMERGENCE OS**, and
+- cards **you already wrote**.
 
-•	⁠/npc [name] — Full dossier: stats, threat state, bias, romance status, active Undercurrent, memories
-•	⁠/npcs — List every known NPC
-•	⁠/locations — List everywhere tracked, with condition and atmosphere
-•	⁠/reputation — Your overall standing rolled up across every known NPC
-•	⁠/undercurrents — View NPC-to-NPC relationship dynamics and recent gossip
-•	⁠/factions — View emergent Coalitions and Rivalry Blocs
-•	⁠/romance [name] — Romantic standing for one character, or everyone
-•	⁠/reflections [name] — Read a character's private reflections
-•	⁠/card [name] — Generate a character sheet (AI fills it in automatically)
-•	⁠/loc [name] — Set your current location & generate its card
-•	⁠/settings — Full settings guide
-•	⁠/cleanup — Purge false-positive NPCs
-•	⁠/forget [name] — Manually remove one specific NPC and its cards
-•	⁠/world — Current location, tension %, player stress
-•	⁠/help — Command list
+A user-authored Character or Location card can be adopted for tracking without its lore being replaced. `/forget` removes an EMERGENCE-generated character card when appropriate, but deliberately preserves an adopted user card.
 
-Commands intercept immediately, so the AI never wastes a turn writing story prose when you're just checking stats. Typo one, or guess at a command that doesn't exist, and you get a direct "not recognized, try /help" instead of the AI trying to improvise a response to it.
+Card creation is also compatibility-hardened for AI Dungeon sandboxes that return a Story Card object, an index/length, or `false` for a duplicate key.
 
-🎛️ Config Toggles (Edit Anytime Mid-Game)
+### 🧠 **Your Author's Note stays yours**
 
-Inside your auto-generated Master World Config story card:
+EMERGENCE OS no longer writes to `state.memory.authorsNote`.
 
-•	⁠AutonomyLevel: Low | Medium | High | Unchained
-•	⁠ConsequenceSeverity: Mild | Moderate | Hardcore
-•	⁠PsychologicalRealism: Standard | Advanced | Raw Human
-•	⁠PhysicalQuirks: High | Moderate | Off
-•	⁠HumanAgency: Enabled | Disabled
-•	⁠GrudgeTracking: Enabled | Disabled
-•	⁠WorldTensionEngine: Dynamic | Static | Disabled
-•	⁠PlayerTrauma: Enabled | Disabled
-•	⁠NpcColorNotes: Enabled | Disabled — the per-turn NPC status note sent to the narrator. Hidden from the story either way; this only controls whether it's generated at all, for anyone who checks their context breakdown and would rather not see it there.
-•	⁠LivingWorldEngine: Enabled | Disabled — powers Undercurrents (passive, inferred from the story)
-•	⁠ReflectionSystem: Enabled | Disabled (off by default)
-•	⁠ReflectionInterval / ReflectionChance: reflection pacing
-•	⁠RomanceEngine: 18+ Unrestricted | PG-13 | Disabled
-•	⁠RomancePacing: Fast | Normal | Slow Burn
-•	⁠JealousyMechanic: Enabled | Disabled
-•	⁠MatureContent: 18+ Unrestricted | PG-13 | Disabled
-•	⁠GraphicRealism: Unfiltered | Standard | Mild
-•	⁠LocationCards / LocationAutoUpdate: Enabled | Disabled
+Instead, it owns one clearly delimited, size-bounded block inside **Front Memory**:
 
-📥 Links & Quick Setup
+```text
+[[EMERGENCE_OS_BEGIN]]
+...
+[[EMERGENCE_OS_END]]
+```
 
-No coding knowledge needed — this is entirely copy and paste. Step by step:
+Anything outside that block is preserved, which makes EMERGENCE OS much friendlier to your own Author's Note and to other scripts using Front Memory.
 
-1.	⁠Create a new Scenario (or open one you already made) — it needs to be a Simple Start or Character Creator scenario; Multiple Choice scenarios can't have scripts.
-2.	⁠On the scenario's edit page, find the Scripting section (it sits alongside Prompt, Plot Essentials, Author's Note, and Story Cards).
-3.	⁠You'll see four slots: Library, Input, Context, Output. Open each pastebin link below, copy everything in it, and paste it into the matching slot, replacing whatever's already there:
+Because AI Dungeon includes Front Memory in full, the EMERGENCE block is deliberately compact rather than dumping every tracked character into context every turn.
 
-1.	⁠Save, then start (or continue) the adventure and take one action.
-2.	⁠You'll see ⚙️ [EMERGENCE OS 1: Active] appear at the end of the story text — that's confirmation it's running. A Master World Config story card also appears in your deck automatically.
-3.	⁠From here, just play normally. Whenever you're curious what it's tracking, type /help as an action to see everything you can check on.
+### 🔁 **Retry / duplicate-mutation protection**
 
-Enjoy!
+Output mutations are keyed to the current AI Dungeon action count plus the visible response. Re-processing the same output for the same action no longer doubles a grudge, attraction gain or other event.
 
-Scenario - https://play.aidungeon.com/scenario/nOikTvPTOb50/rebuilt-emergence-os-1-independent-npcs-trust-and-grudges-and-auto?share=true&published=true
+---
+
+# 🧠 **Core systems**
+
+## 👤 **1. NPC Agency & Boundaries**
+
+When **HumanAgency** is enabled, the narrator is reminded that NPCs can refuse, negotiate, doubt, leave, protect their own priorities or push back when a demand has not been earned.
+
+**AutonomyLevel** controls how strongly coercion affects a relationship:
+
+- **Low** — softer resistance
+- **Medium** — noticeable boundaries
+- **High** — strong independent behaviour
+- **Unchained** — forceful demands can rapidly damage a relationship
+
+Importantly, turning HumanAgency off no longer turns off character detection.
+
+---
+
+## ❤️ **2. Trust, Grudge & Consequences**
+
+Every confirmed NPC can track separate **Trust** and **Grudge** values.
+
+Targeted respectful actions can build trust and soften resentment. Coercion damages trust. Betrayal hits harder and can create a **Formative Memory** when it becomes a defining relationship fracture.
+
+Recent memories keep a short excerpt of the actual incident instead of storing only a vague label.
+
+**ConsequenceSeverity:** Mild · Moderate · Hardcore
+
+---
+
+## 🛡️ **3. Stress, Composure & Defensive Behaviour**
+
+NPCs track:
+
+- **Stress**
+- **Composure**
+- a current defensive state
+- optional inferred bias / attachment tendencies when enough evidence exists
+
+Danger in the current scene affects NPCs who are actually present. Recovery and quieter turns let stress ease instead of leaving everyone permanently maxed out.
+
+The old “Ego Depletion” label has been removed. **Composure** is a narrative resource, not a claim that the contested ego-depletion model is settled psychology.
+
+---
+
+## 🌊 **4. Undercurrents — NPC ↔ NPC Relationships**
+
+NPCs can develop warmth or tension with each other from events that actually occur in their shared clauses/scenes.
+
+Direct conflict, support, romantic behaviour and shared danger can shift their relationship. The system no longer sees three names somewhere in a paragraph and automatically changes every possible pair.
+
+Use:
+
+```text
+/undercurrents
+```
+
+Aliases: `/drives`, `/threads`
+
+---
+
+## 🗣️ **5. Word Gets Around**
+
+Reputation can spread, but only through **genuinely close mutual connections**.
+
+A one-way accidental Undercurrent is not enough. If two NPCs are established confidants and one has a much stronger opinion of the player, a small amount of that opinion can gradually rub off.
+
+Recent social signals are visible through `/undercurrents`.
+
+---
+
+## 🤝 **6. Coalitions & Rivalry Blocs**
+
+`/factions` analyzes the current relationship graph.
+
+A group only qualifies when all three sides of a three-person triangle show strong **mutual** warmth or hostility. This prevents “everyone likes Marcus” from being mislabeled as a coalition between people who barely know each other.
+
+---
+
+## 💞 **7. Romance & Witnessed Jealousy**
+
+Romantic events are target-aware and paced through:
+
+- **Slow Burn**
+- **Normal**
+- **Fast**
+
+Relationship stages progress from a Spark through stronger attachment.
+
+Jealousy is no longer global. An NPC must be interested **and actually present in the scene** to react. Quoted recollections such as *“I kissed Marcus yesterday”* are stripped from witness checks so a merely mentioned character is far less likely to be treated as standing in the room.
+
+---
+
+## 🌍 **8. Living World & Location Memory**
+
+EMERGENCE OS tracks a global World Tension value alongside independent location condition.
+
+A destroyed warehouse does not magically destroy every location in the database. Likewise, describing one place as repaired or intact does not silently heal another.
+
+Use:
+
+```text
+/locations
+/world
+/loc Ravenwood Tavern
+```
+
+---
+
+## 💭 **9. Private Reflections**
+
+Reflections are optional and **disabled by default**.
+
+When enabled, EMERGENCE OS can occasionally ask the model for one hidden first-person reflection grounded in the current scene. The Output hook strips the hidden data block before the player sees it and stores the result in a separate reflection archive.
+
+It is never used as permission to invent a secret that the story has not established.
+
+---
+
+## 🎬 **10. Grounded Character Cards**
+
+`/card NAME` creates a managed character sheet when there is no existing card.
+
+The script can request a profile fill from the model, but the request explicitly says:
+
+> **Use established facts. Write UNKNOWN for unknown original-character facts.**
+
+If you already have a card with that character's name, EMERGENCE OS links to it and adds only its managed state block rather than replacing your lore.
+
+---
+
+## 🎭 **11. Auto Genre Detection**
+
+Set:
+
+```text
+Genre: Auto
+```
+
+and the script keeps a separate detected genre score instead of overwriting the actual config value. You can switch to a manual genre at any point and it stays manual.
+
+Supported presets include Modern, Fantasy, Sci-Fi, Horror, Cyberpunk, Superhero, Western and Noir.
+
+---
+
+# 🎛️ **Configuration**
+
+On the first normal action, EMERGENCE OS creates:
+
+### **⚙️ EMERGENCE OS — Config**
+
+The card **Entry** contains the editable values. Its **Notes** explain every option in plain English and include a `[CHARACTERS]` block for manually confirmed names.
+
+The Entry is deliberately compact and remains well below AI Dungeon's 2,000-character Story Card entry limit used by many creators.
+
+### **Main options**
+
+| Setting | Values | What it controls |
+|---|---|---|
+| `Genre` | Auto / presets | Story-world genre guidance |
+| `NPCBrainSystem` | Enabled / Disabled | Master NPC tracking/psychology switch |
+| `HumanAgency` | Enabled / Disabled | NPC refusal/boundary guidance |
+| `AutonomyLevel` | Low → Unchained | Coercion/pushback strength |
+| `PsychologicalRealism` | Standard / Advanced | Depth of subtext guidance |
+| `PhysicalQuirks` | Off / Moderate / High | Physical micro-tell prompting |
+| `GrudgeTracking` | Enabled / Disabled | Persistent Trust/Grudge changes |
+| `ConsequenceSeverity` | Mild / Moderate / Hardcore | Betrayal/coercion impact |
+| `LivingWorldEngine` | Enabled / Disabled | Undercurrents/reputation/factions |
+| `RomanceEngine` | Enabled / Disabled | Attraction system |
+| `RomancePacing` | Slow Burn / Normal / Fast | Attraction progression speed |
+| `JealousyMechanic` | Enabled / Disabled | Witnessed jealousy |
+| `WorldTensionEngine` | Dynamic / Static / Disabled | Global danger state |
+| `PlayerTrauma` | Enabled / Disabled | Player stress/composure cues |
+| `LocationCards` | Enabled / Disabled | Automatic location cards |
+| `LocationAutoUpdate` | Enabled / Disabled | Managed location state refresh |
+| `ReflectionSystem` | Enabled / Disabled | Private reflections |
+| `DetectionSensitivity` | Conservative / Balanced / Aggressive | Auto-discovery confidence |
+| `CardRefreshInterval` | 2–20 | Routine card-write pacing |
+| `MaxTrackedNPCs` | 5–100 | Automatic NPC safety cap |
+| `MaxTrackedLocations` | 5–100 | Automatic location safety cap |
+| `NpcColorNotes` | Enabled / Disabled | Compact current-scene NPC guidance |
+| `DebugMode` | Enabled / Disabled | Small internal diagnostics log |
+
+---
+
+# ⌨️ **Commands**
+
+| Command | Purpose |
+|---|---|
+| `/help` | Command list |
+| `/about` | Project summary + GitHub link |
+| `/npc NAME` | Full NPC dossier |
+| `/npcs` | All tracked NPCs |
+| `/card NAME` | Create or link a character Story Card |
+| `/forget NAME` | Stop tracking one NPC; preserves adopted user cards |
+| `/locations` | All tracked locations |
+| `/loc NAME` | Set/create current location |
+| `/world` | Location, tension, player stress and genre |
+| `/romance [NAME]` | Romantic standing |
+| `/undercurrents` | NPC-to-NPC dynamics + recent social signals |
+| `/factions` | Mutual coalitions/rivalry triangles |
+| `/reputation` | Overall player standing |
+| `/reflections NAME` | Read private reflections |
+| `/settings` | Compact config summary |
+| `/cleanup` | Remove obvious object/location false positives |
+| `/debug` | Diagnostics when DebugMode is enabled |
+
+> **Command limitation:** commands are intercepted so the generated story prose is replaced by the command result. AI Dungeon's scripting hooks do not currently provide a reliable “return Output without invoking the normal model pipeline” mechanism, so the README no longer claims commands are literally free model turns.
+
+---
+
+# 📦 **Package contents**
+
+| File | Purpose |
+|---|---|
+| `library.js` | Main EMERGENCE OS engine |
+| `input.js` | Command capture + fresh player-input handling |
+| `context.js` | Config sync, maintenance and compact Front Memory |
+| `output.js` | Visible-output cleanup + persistent state updates |
+| `SCENARIO_DESCRIPTION.md` | Ready-to-paste AI Dungeon scenario description |
+| `QUICK_START.md` | Short installation/config reference |
+| `PACKAGE_CONTENTS.md` | Package map / paste-vs-test reference |
+| `RELEASE_NOTES.md` | Rebuild changes + upgrade notes |
+| `test_harness.js` | Local regression harness; **do not paste into AI Dungeon** |
+| `README.md` | Full documentation, systems, config and research notes |
+
+---
+
+# 📥 **Installation**
+
+AI Dungeon currently exposes four scripting tabs: **Library, Input, Context and Output**.
+
+1. Open or create a script-capable Scenario on AI Dungeon Web/Desktop.
+2. Open **Details → Scripting** and enable scripting.
+3. Open **Edit Scripts**.
+4. Paste each file into its matching tab:
+   - `library.js` → **Library**
+   - `input.js` → **Input**
+   - `context.js` → **Context**
+   - `output.js` → **Output**
+5. Save the scenario.
+6. Start or continue the Adventure and take a normal action.
+7. Look for:
+
+```text
+⚙️ [EMERGENCE OS: Active — type /help]
+```
+
+The **⚙️ EMERGENCE OS — Config** Story Card should also appear automatically.
+
+---
+
+# 🧩 **How the four hooks work**
+
+```text
+PLAYER ACTION
+     │
+     ▼
+┌─────────┐
+│  Input  │  commands • player action capture • early entity evidence
+└────┬────┘
+     │
+     ▼
+┌─────────┐
+│ Context │  config sync • bounded maintenance • compact Front Memory block
+└────┬────┘
+     │
+     ▼
+   MODEL
+     │
+     ▼
+┌─────────┐
+│ Output  │  strip hidden tags • target events • world/NPC/location updates
+└────┬────┘
+     │
+     ▼
+VISIBLE STORY + PERSISTENT STATE
+```
+
+The heavy logic lives in `library.js`; the three modifier files stay intentionally small.
+
+---
+
+# ⚡ **Performance philosophy**
+
+AI Dungeon's scripting sandbox has finite execution time and memory, so EMERGENCE OS avoids doing every maintenance pass on every turn.
+
+- Entity scans use bounded text windows.
+- Weak candidates expire.
+- Automatic NPC/location counts have configurable caps.
+- Dirty Story Cards flush in small batches.
+- Genre detection and reputation spread are periodic.
+- Front Memory stays compact.
+- Hidden profile/reflection requests are queued rather than stacked.
+
+---
+
+# 🧪 **Verification included in this package**
+
+`test_harness.js` is a local Node harness used during the rebuild. It checks the highest-risk logic paths, including:
+
+- one config card rather than duplicate creation
+- NPC/location separation
+- automatic location-card creation
+- target-aware romance and coercion
+- witness-only jealousy, including quoted-name false-positive protection
+- duplicate-output mutation protection
+- clause-aware independent location conditions
+- preservation of user-created Story Cards
+- preservation of a custom Author's Note
+- compact config entry size
+
+It is **not** pasted into AI Dungeon; it is included only as a regression test/reference.
+
+---
+
+# 🔬 **Research & design notes**
+
+EMERGENCE OS borrows useful concepts from psychology for **fictional character modelling**, but the script is not a mental-health assessment tool.
+
+### **Attachment**
+
+Adult attachment dimensions and relationship security are legitimate areas of psychological research, but “earned secure attachment” is not accurately represented by a simple universal permanent counter. A 2026 scoping review covering 24 empirical studies described the evidence as heterogeneous and its conclusions as preliminary.
+
+- Filosa, Sharp, Gori & Musetti — *A Comprehensive Scoping Review of Empirical Studies on Earned Secure Attachment* (Psychological Reports, 2026): https://pubmed.ncbi.nlm.nih.gov/39207034/
+
+### **Defensive states / Polyvagal claims**
+
+Fight, flight and freezing are useful defensive-response concepts for narrative modelling. The stronger physiological claims of Polyvagal Theory are scientifically contested, so this rebuild no longer presents a “polyvagal hierarchy” as settled fact.
+
+- Grossman — *Fundamental challenges and likely refutations of the five basic premises of the polyvagal theory* (Biological Psychology, 2023): https://doi.org/10.1016/j.biopsycho.2023.108589
+
+### **Ego depletion**
+
+The script no longer uses “Ego Depletion” as if it were a settled resource model. **Composure** is now explicitly a fictional/narrative state variable.
+
+---
+
+# 🧱 **Current AI Dungeon behaviour this rebuild is designed around**
+
+The implementation follows AI Dungeon's current scripting documentation:
+
+- four hooks: Library / Input / Context / Output
+- persistent `state`
+- `storyCards`
+- `info.actionCount`
+- `state.memory.frontMemory`
+- `state.memory.authorsNote`
+- script execution limits
+
+Official scripting documentation:
+
+- https://help.aidungeon.com/faq/how-do-i-write-scripts-and-use-scripting
+- https://help.aidungeon.com/faq/what-are-scripts-and-how-do-you-install-them
+
+---
+
+# ⚠️ **Known limitations**
+
+No regex/state script can perfectly understand unrestricted prose.
+
+EMERGENCE OS deliberately prefers **missing an uncertain event** over confidently assigning a kiss, betrayal or insult to the wrong person. For unusual naming styles or deliberately ambiguous prose, use the config card's `[CHARACTERS]` section or `/card NAME` to confirm somebody manually.
+
+The narrator/model still has the final say over generated prose. The script can provide state and strong guidance; it cannot guarantee perfect compliance from every AI model.
+
+---
+
+## ⚙️ **EMERGENCE OS**
+
+🔗 **GitHub:** https://github.com/amazingrand0mproductions-crypto/EMERGENCE-OS
+
+**The goal isn't to make the script louder. It's to make the world remember more while putting less junk in the story.**
