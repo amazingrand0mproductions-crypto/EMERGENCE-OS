@@ -43,6 +43,14 @@ class EmergenceEngine {
       MaxTrackedLocations: "30",
       MatureContent: "Enabled",
       GraphicRealism: "Standard",
+      SceneContinuity: "Enabled",
+      AliasDetection: "Enabled",
+      RelationshipNuance: "Enabled",
+      MemoryDepth: "Standard",
+      PresencePersistence: "2",
+      MaxEventLedger: "90",
+      StateRepair: "Enabled",
+      ContextDetail: "Balanced",
       DebugMode: "Disabled"
     };
     Object.keys(defaults).forEach(k => {
@@ -92,6 +100,16 @@ class EmergenceEngine {
     if (!e.dirtyNpcs || !Array.isArray(e.dirtyNpcs)) e.dirtyNpcs = [];
     if (!e.dirtyLocations || !Array.isArray(e.dirtyLocations)) e.dirtyLocations = [];
     if (!e.debugLog || !Array.isArray(e.debugLog)) e.debugLog = [];
+    if (!e.aliases || typeof e.aliases !== "object" || Array.isArray(e.aliases)) e.aliases = {};
+    if (!e.sceneRoster || typeof e.sceneRoster !== "object" || Array.isArray(e.sceneRoster)) e.sceneRoster = {};
+    if (!e.eventLedger || !Array.isArray(e.eventLedger)) e.eventLedger = [];
+    if (!e.recentEventHashes || typeof e.recentEventHashes !== "object" || Array.isArray(e.recentEventHashes)) e.recentEventHashes = {};
+    if (!e.sceneHistory || !Array.isArray(e.sceneHistory)) e.sceneHistory = [];
+    if (!e.relationshipHistory || !Array.isArray(e.relationshipHistory)) e.relationshipHistory = [];
+    if (!e.runtimeStats || typeof e.runtimeStats !== "object" || Array.isArray(e.runtimeStats)) {
+      e.runtimeStats = { repairs: 0, prunedCandidates: 0, prunedEvents: 0, lastRepairTurn: -1, lastSceneTurn: -1 };
+    }
+    if (!e.schemaVersion || e.schemaVersion < 3) e.schemaVersion = 3;
     if (e.initialized === undefined) e.initialized = false;
     if (e.isCommandTurn === undefined) e.isCommandTurn = false;
 
@@ -129,6 +147,18 @@ class EmergenceEngine {
     if (!npc.lastInteractionType) npc.lastInteractionType = "";
     if (npc.lastInteractionTurn === undefined) npc.lastInteractionTurn = -999;
     if (npc.generatedByEOS === undefined) npc.generatedByEOS = false;
+    if (npc.familiarity === undefined) npc.familiarity = Math.max(0, Math.min(100, (npc.memories.length || 0) * 6));
+    if (npc.respect === undefined) npc.respect = 50;
+    if (npc.fear === undefined) npc.fear = 0;
+    if (!Array.isArray(npc.memoryLedger)) npc.memoryLedger = [];
+    if (!Array.isArray(npc.commitments)) npc.commitments = [];
+    if (!Array.isArray(npc.boundaries)) npc.boundaries = [];
+    if (!Array.isArray(npc.aliases)) npc.aliases = [];
+    if (npc.firstSeenTurn === undefined) npc.firstSeenTurn = npc.lastSeenTurn || state.emergence.turnCount || 0;
+    if (npc.sceneCount === undefined) npc.sceneCount = 0;
+    if (npc.mentionCount === undefined) npc.mentionCount = 0;
+    if (npc.relationshipTone === undefined) npc.relationshipTone = "Neutral";
+    if (npc.lastStateSummary === undefined) npc.lastStateSummary = "";
     delete npc.egoReserve;
     return npc;
   }
@@ -143,6 +173,12 @@ class EmergenceEngine {
     }
     if (loc.lastSeenTurn === undefined) loc.lastSeenTurn = 0;
     if (loc.generatedByEOS === undefined) loc.generatedByEOS = false;
+    if (loc.visitCount === undefined) loc.visitCount = 0;
+    if (loc.firstSeenTurn === undefined) loc.firstSeenTurn = loc.lastSeenTurn || state.emergence.turnCount || 0;
+    if (!Array.isArray(loc.conditionHistory)) loc.conditionHistory = [];
+    if (!Array.isArray(loc.tags)) loc.tags = [];
+    if (!Array.isArray(loc.recentOccupants)) loc.recentOccupants = [];
+    if (loc.lastConditionTurn === undefined) loc.lastConditionTurn = 0;
     return loc;
   }
 
@@ -247,6 +283,21 @@ class EmergenceEngine {
     while (e.debugLog.length > 20) e.debugLog.shift();
   }
 
+  static reportHookError(hookName, error) {
+    const e = state.emergence || (state.emergence = {});
+    const msg = error && error.message ? error.message : String(error || "Unknown error");
+    e.lastError = {
+      hook: String(hookName || "unknown"),
+      turn: e.turnCount || this.actionCount(),
+      message: this.excerpt(msg, 180)
+    };
+    if (e.config && String(e.config.DebugMode).toLowerCase() === "enabled") {
+      if (!Array.isArray(e.debugLog)) e.debugLog = [];
+      e.debugLog.push(`[${e.lastError.turn}] ${e.lastError.hook}: ${e.lastError.message}`);
+      while (e.debugLog.length > 20) e.debugLog.shift();
+    }
+  }
+
   static addUnique(arr, value, max = 100) {
     if (!Array.isArray(arr)) return;
     if (!arr.includes(value)) arr.push(value);
@@ -297,6 +348,9 @@ class EmergenceEngine {
   static createStoryCard(keys, entry, type = "Custom", title = "", notes = "") {
     const cards = this.cardArray();
     if (!cards) return null;
+    const existing = this.findCardByKey(String(keys).split(",")[0]) || (title ? this.findCardByTitle(title) : null);
+    if (existing) return existing;
+
     const beforeLen = cards.length;
     let result = null;
     let apiAttempted = false;
@@ -305,67 +359,82 @@ class EmergenceEngine {
     if (typeof addStoryCard === "function") {
       apiAttempted = true;
       try {
-        // Current AI Dungeon sandboxes support the extended title/notes/options
-        // shape; older/documented variants may return a number or false instead.
-        result = addStoryCard(keys, entry, type, title || keys, notes || "", { returnCard: true });
+        // Use AI Dungeon's documented three-argument API. It returns the new
+        // card index (or false for duplicate keys). Title/Notes are player-side
+        // metadata, so we attach those after the new array entry exists.
+        result = addStoryCard(keys, entry, type);
       } catch (err) {
         apiFailed = true;
-        this.debug(`addStoryCard extended call failed: ${err && err.message ? err.message : err}`);
-        try {
-          result = addStoryCard(keys, entry, type);
-          apiFailed = false;
-        } catch (err2) {
-          apiFailed = true;
-          this.debug(`addStoryCard fallback failed: ${err2 && err2.message ? err2.message : err2}`);
-        }
+        this.debug(`addStoryCard failed: ${err && err.message ? err.message : err}`);
       }
     }
 
-    if (result && typeof result === "object") {
-      if (title && !result.title) result.title = title;
-      if (notes && !result.description && !result.notes) result.description = notes;
-      return result;
-    }
-
-    // Most reliable cross-version signal: the API grew storyCards.
+    let card = null;
     if (cards.length > beforeLen) {
-      const card = cards[cards.length - 1];
-      if (card) {
-        if (title) card.title = title;
-        if (notes && !card.description && !card.notes) card.description = notes;
-      }
-      return card || null;
-    }
-
-    // Some variants return an index (or one-based length) without returning object.
-    if (typeof result === "number") {
+      card = cards[cards.length - 1] || null;
+    } else if (typeof result === "number") {
       const candidates = [result, result - 1].filter(i => i >= 0 && i < cards.length);
       for (let i = 0; i < candidates.length; i++) {
-        const card = cards[candidates[i]];
-        if (card && (this.cardKeyString(card).toLowerCase().includes(String(keys).toLowerCase()) || !keys)) return card;
+        const c = cards[candidates[i]];
+        if (c && this.cardKeyString(c).toLowerCase().includes(String(keys).split(",")[0].trim().toLowerCase())) {
+          card = c;
+          break;
+        }
       }
+    } else if (result === false) {
+      card = this.findCardByKey(String(keys).split(",")[0]) || null;
     }
 
-    // false generally means a duplicate key. Reuse it instead of duplicating it.
-    const existing = this.findCardByKey(String(keys).split(",")[0]) || (title ? this.findCardByTitle(title) : null);
-    if (existing) return existing;
+    if (card) {
+      if (title) {
+        card.title = title;
+        card.name = title;
+      }
+      if (notes) {
+        card.description = notes;
+        card.notes = notes;
+      }
+      return card;
+    }
 
-    // Only manually push if the API is unavailable or genuinely failed without
-    // changing the array. Never double-create after a successful API write.
+    // Manual fallback only when the official API is unavailable or actually
+    // throws. Never push after an apparently successful API call.
     if (!apiAttempted || apiFailed) {
-      const card = {
+      card = {
         id: `eos-${Date.now ? Date.now() : 0}-${Math.floor(Math.random() * 1000000)}`,
         keys,
         entry,
         type,
         title: title || keys,
         name: title || keys,
-        description: notes || ""
+        description: notes || "",
+        notes: notes || ""
       };
       cards.push(card);
       return card;
     }
     return null;
+  }
+
+  static updateCardContent(card, entry, keysOverride = null, typeOverride = null) {
+    const cards = this.cardArray();
+    if (!card || !cards) return false;
+    const index = cards.indexOf(card);
+    const keys = keysOverride !== null ? keysOverride : card.keys;
+    const type = typeOverride !== null ? typeOverride : card.type;
+    const nextEntry = String(entry || "");
+    if (index >= 0 && typeof updateStoryCard === "function") {
+      try {
+        // Current documented API updates keys/entry/type by array index.
+        updateStoryCard(index, keys, nextEntry, type);
+      } catch (err) {
+        this.debug(`updateStoryCard failed; using array mutation fallback: ${err && err.message ? err.message : err}`);
+      }
+    }
+    card.keys = keys;
+    card.entry = nextEntry;
+    card.type = type;
+    return true;
   }
 
   static cardId(card) {
@@ -453,6 +522,14 @@ class EmergenceEngine {
       "MaxTrackedLocations: 30",
       "MatureContent: Enabled",
       "GraphicRealism: Standard",
+      "SceneContinuity: Enabled",
+      "AliasDetection: Enabled",
+      "RelationshipNuance: Enabled",
+      "MemoryDepth: Standard",
+      "PresencePersistence: 2",
+      "MaxEventLedger: 90",
+      "StateRepair: Enabled",
+      "ContextDetail: Balanced",
       "DebugMode: Disabled"
     ].join("\n");
   }
@@ -507,6 +584,14 @@ DetectionSensitivity: Conservative | Balanced | Aggressive — confidence thresh
 CardRefreshInterval: 2–20 — minimum routine interval before dirty managed cards are flushed.
 MaxTrackedNPCs: 5–100 — safety cap for automatic NPC discovery; manual /card still works.
 MaxTrackedLocations: 5–100 — safety cap for automatic location discovery.
+SceneContinuity: Enabled | Disabled — keeps a short location-aware scene roster so quiet NPCs do not vanish between paragraphs and quoted recollections do not become witnesses.
+AliasDetection: Enabled | Disabled — learns safe aliases such as first names from confirmed full names when the alias is unambiguous.
+RelationshipNuance: Enabled | Disabled — adds apology, gratitude, promise, rescue, rejection, forgiveness, boundary and abandonment events on top of the core trust/grudge engine.
+MemoryDepth: Light | Standard | Deep — controls each NPC's structured relationship-memory ledger. Rolling prose memories remain compact.
+PresencePersistence: 0–4 — turns a quiet NPC can remain in the same scene without explicit re-mention, unless an exit is detected.
+MaxEventLedger: 30–160 — bounded global relationship-event history used for diagnostics and deduplication.
+StateRepair: Enabled | Disabled — periodically repairs orphaned references, invalid stats and stale candidates without deleting established user lore.
+ContextDetail: Lean | Balanced | Rich — controls how much relationship continuity is packed into the script-managed Front Memory block.
 DebugMode: Enabled | Disabled — keeps a small internal diagnostic log shown by /debug.
 
 🎬 CONTENT
@@ -514,7 +599,7 @@ MatureContent: Enabled | Disabled — narrative tone hint only; platform/model s
 GraphicRealism: Mild | Standard | Unfiltered — violence-detail preference hint.
 
 ⌨️ COMMANDS
-/help | /about | /npc NAME | /npcs | /card NAME | /forget NAME | /locations | /loc NAME | /world | /romance [NAME] | /undercurrents | /factions | /reputation | /reflections NAME | /settings | /cleanup | /debug
+/help | /about | /npc NAME | /npcs | /card NAME | /forget NAME | /locations | /loc NAME | /world | /scene | /memory NAME | /romance [NAME] | /undercurrents | /factions | /reputation | /reflections NAME | /settings | /cleanup | /debug
 
 TIP: /help is the fastest reference. Commands are intercepted from story prose, but still pass through AI Dungeon's normal scripting/model pipeline.`;
   }
@@ -552,6 +637,39 @@ TIP: /help is the fastest reference. Commands are intercepted from story prose, 
     return card;
   }
 
+  static syncConfigCardSchema(card) {
+    if (!card) return card;
+    const current = String(card.entry || "");
+    const present = {};
+    current.split(/\r?\n/).forEach(line => {
+      const m = line.match(/^([A-Za-z][A-Za-z0-9]+):/);
+      if (m) present[m[1]] = true;
+    });
+
+    const lines = current ? current.split(/\r?\n/) : ["[EMERGENCE OS CONFIG]"];
+    if (!lines.some(line => line.includes("[EMERGENCE OS CONFIG]"))) lines.unshift("[EMERGENCE OS CONFIG]");
+    this.configEntry().split(/\r?\n/).slice(1).forEach(line => {
+      const m = line.match(/^([A-Za-z][A-Za-z0-9]+):/);
+      if (m && !present[m[1]]) lines.push(line);
+    });
+    card.entry = lines.join("\n").slice(0, 1950);
+
+    // Refresh generated documentation while preserving the user's manual
+    // character block. This is important when upgrading an adventure from an
+    // older EMERGENCE OS release that did not expose newer controls.
+    const oldNotes = String(card.description || card.notes || "");
+    const oldChars = oldNotes.match(/\[CHARACTERS\]([\s\S]*?)\[\/CHARACTERS\]/i);
+    let manual = [];
+    if (oldChars) {
+      manual = oldChars[1].split(/\r?\n/).map(x => x.trim()).filter(x => x && !x.startsWith("#"));
+    }
+    let notes = this.configNotes();
+    if (manual.length) notes = notes.replace(/\[CHARACTERS\][\s\S]*?\[\/CHARACTERS\]/i, `[CHARACTERS]\n${manual.join("\n")}\n[/CHARACTERS]`);
+    card.description = notes;
+    card.notes = notes;
+    return card;
+  }
+
   static ensureConfigCard() {
     this.init();
     const cards = this.cardArray();
@@ -562,6 +680,7 @@ TIP: /help is the fastest reference. Commands are intercepted from story prose, 
     } else {
       card = this.upgradeLegacyConfigCard(card);
     }
+    if (card) card = this.syncConfigCardSchema(card);
     if (card) {
       if (!card.description && !card.notes) card.description = this.configNotes();
       if (!card.title) card.title = "⚙️ EMERGENCE OS — Config";
@@ -582,14 +701,18 @@ TIP: /help is the fastest reference. Commands are intercepted from story prose, 
       WorldTensionEngine: ["Dynamic", "Static", "Disabled"], PlayerTrauma: ["Enabled", "Disabled"],
       LocationCards: ["Enabled", "Disabled"], LocationAutoUpdate: ["Enabled", "Disabled"], InnerSelfSystem: ["Enabled", "Disabled"],
       ReflectionSystem: ["Enabled", "Disabled"], NpcColorNotes: ["Enabled", "Disabled"], DetectionSensitivity: ["Conservative", "Balanced", "Aggressive"],
-      MatureContent: ["Enabled", "Disabled"], GraphicRealism: ["Mild", "Standard", "Unfiltered"], DebugMode: ["Enabled", "Disabled"]
+      MatureContent: ["Enabled", "Disabled"], GraphicRealism: ["Mild", "Standard", "Unfiltered"],
+      SceneContinuity: ["Enabled", "Disabled"], AliasDetection: ["Enabled", "Disabled"], RelationshipNuance: ["Enabled", "Disabled"],
+      MemoryDepth: ["Light", "Standard", "Deep"], StateRepair: ["Enabled", "Disabled"], ContextDetail: ["Lean", "Balanced", "Rich"],
+      DebugMode: ["Enabled", "Disabled"]
     };
     if (enums[key]) {
       const found = enums[key].find(v => v.toLowerCase() === value.toLowerCase());
       return found || state.emergence.config[key];
     }
     const numeric = {
-      ReflectionInterval: [3, 50], ReflectionChance: [0, 100], CardRefreshInterval: [2, 20], MaxTrackedNPCs: [5, 100], MaxTrackedLocations: [5, 100]
+      ReflectionInterval: [3, 50], ReflectionChance: [0, 100], CardRefreshInterval: [2, 20], MaxTrackedNPCs: [5, 100], MaxTrackedLocations: [5, 100],
+      PresencePersistence: [0, 4], MaxEventLedger: [30, 160]
     };
     if (numeric[key]) {
       const n = parseInt(value, 10);
@@ -643,6 +766,7 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
   static isPlausiblePersonName(name) {
     const n = this.cleanName(name);
     if (!n || n.length < 2 || n.length > 55) return false;
+    if (this.isPlayerControlledName(n) || this.isExpandedNonPerson(n) || this.isVehicleLikeName(n)) return false;
     const parts = n.split(/\s+/);
     if (parts.length > 4) return false;
     const stop = this.personStopwords();
@@ -653,10 +777,12 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
   }
 
   static looksLikePlaceName(name) {
+    if (this.hasLocationTypeToken(name)) return true;
     return /\b(?:City|Town|Village|Kingdom|Realm|Nation|Empire|District|Province|State|Country|Island|Valley|Forest|Woods|Mountain|Mount|Lake|River|Ocean|Sea|Castle|Palace|Temple|Academy|School|University|College|Hospital|Clinic|Tavern|Inn|Hotel|Bar|Cafe|Café|Restaurant|Bookstore|Library|Shop|Store|Market|Mall|Warehouse|Office|Station|Airport|Port|Harbor|Harbour|Base|Laboratory|Lab|Tower|Fortress|Park|Plaza|Square|Arena|Stadium|Farm|Ranch|Estate|Manor|Church|Cathedral|Cemetery|Prison|Jail|Theater|Theatre|Museum|Beach|Cave|Mine|Ruins)\b/i.test(name);
   }
 
   static looksLikeObjectName(name) {
+    if (this.isExpandedNonPerson(name) || this.isVehicleLikeName(name)) return true;
     if (/(?:mobile|craft|mobile suit)$/i.test(String(name || ""))) return true;
     return /\b(?:Mobile|Car|Truck|Van|Bike|Motorcycle|Jet|Plane|Ship|Boat|Sword|Blade|Gun|Rifle|Pistol|Armor|Armour|Ring|Amulet|Crown|Book|Books|Tome|Device|Machine|Robot|Drone|Computer|Phone|Suit)\b/i.test(name);
   }
@@ -855,7 +981,10 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
         memories: [], coreMemory: "", undercurrents: {}, reflections: [],
         lastSeenLocation: "", lastSeenTurn: 0, secureStreak: 0,
         biasEvidence: {}, attachmentEvidence: {}, lastInteractionType: "", lastInteractionTurn: -999,
-        generatedByEOS: false
+        generatedByEOS: false,
+        familiarity: 0, respect: 50, fear: 0, memoryLedger: [], commitments: [], boundaries: [], aliases: [],
+        firstSeenTurn: state.emergence.turnCount || this.actionCount(), sceneCount: 0, mentionCount: 0,
+        relationshipTone: "Unfamiliar", lastStateSummary: ""
       };
     }
     const npc = this.normalizeNpc(n);
@@ -881,7 +1010,9 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
     if (exact) return exact;
     // Unambiguous first-name match only; never guess between two Alexes.
     const matches = names.filter(n => n.split(/\s+/)[0].toLowerCase() === target.split(/\s+/)[0]);
-    return matches.length === 1 ? matches[0] : null;
+    if (matches.length === 1) return matches[0];
+    const mapped = state.emergence.aliases && state.emergence.aliases[target];
+    return mapped && mapped !== "__ambiguous__" && state.world.npcs[mapped] ? mapped : null;
   }
 
   static getSceneNames(text) {
@@ -1097,6 +1228,11 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
       }
       npc.lastInteractionType = ev.type;
       npc.lastInteractionTurn = state.emergence.turnCount;
+      this.updateStat(npc, "familiarity", 2);
+      this.recordStructuredMemory(ev.target, ev.type, ev.clause, ev.type === "betrayal" ? 8 : ev.type === "coercion" ? 5 : ev.type === "romance" ? 5 : 3, "player-core");
+      this.addGlobalEvent(ev.target, ev.type, ev.clause, ev.type === "betrayal" ? 8 : 4);
+      this.recalculateRelationshipTone(ev.target);
+      this.trackRelationshipSnapshot(ev.target, ev.type);
       this.updateThreatState(ev.target);
       this.markNpcDirty(ev.target);
     });
@@ -1134,7 +1270,7 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
   }
 
   static processNpcPresence(text) {
-    const names = this.getPresentSceneNames(text);
+    const names = this.enabled("SceneContinuity") ? this.updateSceneRoster(text) : this.getPresentSceneNames(text);
     state.emergence.sceneNames = names;
     const danger = this.interactionPatterns().danger.test(text);
     names.forEach(name => {
@@ -1142,6 +1278,8 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
       if (!npc) return;
       npc.lastSeenLocation = state.emergence.currentLocation;
       npc.lastSeenTurn = state.emergence.turnCount;
+      this.noteNpcMention(name);
+      this.noteNpcScene(name);
       if (danger && state.emergence.config.WorldTensionEngine === "Dynamic") {
         this.updateStat(npc, "stress", 8);
         this.updateStat(npc, "composure", -6);
@@ -1328,7 +1466,12 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
         const loc = state.world.locations[name];
         if (!loc) return;
         if (loc.condition !== condition) {
+          const before = loc.condition;
           loc.condition = condition;
+          loc.lastSeenTurn = state.emergence.turnCount;
+          loc.lastConditionTurn = state.emergence.turnCount;
+          loc.conditionHistory.push({ turn: state.emergence.turnCount, from: before, to: condition, text: this.excerpt(clause, 120) });
+          while (loc.conditionHistory.length > 12) loc.conditionHistory.shift();
           this.markLocationDirty(name);
         }
       });
@@ -1416,7 +1559,7 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
     if (!base) base = `Name: ${name}`;
     let merged = `${base}\n\n${stateBlock}`;
     if (merged.length > 1800) merged = merged.slice(0, 1797) + "…";
-    card.entry = merged;
+    this.updateCardContent(card, merged);
   }
 
   static updateLocationCard(name) {
@@ -1429,9 +1572,9 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
     if (binding && !binding.generated) {
       const base = String(card.entry || "").split("--- EMERGENCE LOCATION STATE ---")[0].trim();
       const block = this.locationEntry(name, loc).replace("[EMERGENCE LOCATION]", "--- EMERGENCE LOCATION STATE ---");
-      card.entry = `${base}\n\n${block}`.slice(0, 1800);
+      this.updateCardContent(card, `${base}\n\n${block}`.slice(0, 1800));
     } else {
-      card.entry = this.locationEntry(name, loc);
+      this.updateCardContent(card, this.locationEntry(name, loc));
     }
   }
 
@@ -1609,6 +1752,1644 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
     while (state.emergence.pendingNarrativeNudges.length > 6) state.emergence.pendingNarrativeNudges.shift();
   }
 
+
+  // ---------------------------------------------------------------------------
+  // EXPANDED CONTINUITY KERNEL
+  // ---------------------------------------------------------------------------
+  // Larger vocabulary and deeper continuity are intentionally lazy/bounded.
+  // Definitions add breadth without turning each 2-second AI Dungeon hook into
+  // an expensive full-world simulation.
+
+  static expandedLexicons() {
+    if (this._expandedLexicons) return this._expandedLexicons;
+    this._expandedLexicons = {
+      objects: [
+        "door",
+        "doors",
+        "doorway",
+        "gate",
+        "gates",
+        "fence",
+        "fences",
+        "wall",
+        "walls",
+        "floor",
+        "floors",
+        "ceiling",
+        "ceilings",
+        "roof",
+        "roofs",
+        "stair",
+        "stairs",
+        "staircase",
+        "corridor",
+        "hallway",
+        "hall",
+        "room",
+        "rooms",
+        "chamber",
+        "chambers",
+        "bedroom",
+        "bathroom",
+        "restroom",
+        "toilet",
+        "kitchen",
+        "lounge",
+        "cellar",
+        "basement",
+        "attic",
+        "balcony",
+        "porch",
+        "patio",
+        "table",
+        "tables",
+        "desk",
+        "desks",
+        "chair",
+        "chairs",
+        "sofa",
+        "couch",
+        "bed",
+        "beds",
+        "shelf",
+        "shelves",
+        "cabinet",
+        "cabinets",
+        "cupboard",
+        "dresser",
+        "mirror",
+        "mirrors",
+        "window",
+        "windows",
+        "curtain",
+        "curtains",
+        "carpet",
+        "rug",
+        "lamp",
+        "lamps",
+        "candle",
+        "candles",
+        "torch",
+        "torches",
+        "fireplace",
+        "hearth",
+        "shirt",
+        "shirts",
+        "blouse",
+        "jacket",
+        "jackets",
+        "coat",
+        "coats",
+        "cloak",
+        "cloaks",
+        "robe",
+        "robes",
+        "dress",
+        "dresses",
+        "skirt",
+        "skirts",
+        "pants",
+        "trousers",
+        "jeans",
+        "shorts",
+        "sweater",
+        "sweaters",
+        "hoodie",
+        "hoodies",
+        "uniform",
+        "uniforms",
+        "armor",
+        "armour",
+        "helmet",
+        "helmets",
+        "mask",
+        "masks",
+        "cape",
+        "capes",
+        "gloves",
+        "boots",
+        "shoes",
+        "socks",
+        "scarf",
+        "belt",
+        "belts",
+        "tie",
+        "ties",
+        "phone",
+        "phones",
+        "smartphone",
+        "tablet",
+        "tablets",
+        "laptop",
+        "laptops",
+        "computer",
+        "computers",
+        "monitor",
+        "monitors",
+        "screen",
+        "screens",
+        "keyboard",
+        "keyboards",
+        "mouse",
+        "camera",
+        "cameras",
+        "radio",
+        "radios",
+        "television",
+        "tv",
+        "televisions",
+        "speaker",
+        "speakers",
+        "headset",
+        "headphones",
+        "microphone",
+        "microphones",
+        "book",
+        "books",
+        "tome",
+        "tomes",
+        "journal",
+        "journals",
+        "diary",
+        "diaries",
+        "notebook",
+        "notebooks",
+        "letter",
+        "letters",
+        "note",
+        "notes",
+        "paper",
+        "papers",
+        "document",
+        "documents",
+        "file",
+        "files",
+        "folder",
+        "folders",
+        "map",
+        "maps",
+        "photograph",
+        "photographs",
+        "photo",
+        "photos",
+        "picture",
+        "pictures",
+        "painting",
+        "paintings",
+        "poster",
+        "posters",
+        "sword",
+        "swords",
+        "blade",
+        "blades",
+        "knife",
+        "knives",
+        "dagger",
+        "daggers",
+        "axe",
+        "axes",
+        "spear",
+        "spears",
+        "bow",
+        "bows",
+        "arrow",
+        "arrows",
+        "gun",
+        "guns",
+        "pistol",
+        "pistols",
+        "rifle",
+        "rifles",
+        "shotgun",
+        "shotguns",
+        "weapon",
+        "weapons",
+        "shield",
+        "shields",
+        "club",
+        "clubs",
+        "hammer",
+        "hammers",
+        "wand",
+        "wands",
+        "staff",
+        "staffs",
+        "ring",
+        "rings",
+        "necklace",
+        "necklaces",
+        "amulet",
+        "amulets",
+        "bracelet",
+        "bracelets",
+        "crown",
+        "crowns",
+        "key",
+        "keys",
+        "coin",
+        "coins",
+        "money",
+        "wallet",
+        "wallets",
+        "purse",
+        "purses",
+        "bag",
+        "bags",
+        "backpack",
+        "backpacks",
+        "suitcase",
+        "suitcases",
+        "box",
+        "boxes",
+        "chest",
+        "chests",
+        "crate",
+        "crates",
+        "package",
+        "packages",
+        "parcel",
+        "parcels",
+        "bottle",
+        "bottles",
+        "glass",
+        "glasses",
+        "cup",
+        "cups",
+        "mug",
+        "mugs",
+        "plate",
+        "plates",
+        "bowl",
+        "bowls",
+        "fork",
+        "forks",
+        "spoon",
+        "spoons",
+        "cutlery",
+        "food",
+        "meal",
+        "meals",
+        "bread",
+        "coffee",
+        "tea",
+        "water",
+        "wine",
+        "beer",
+        "drink",
+        "drinks",
+        "car",
+        "cars",
+        "truck",
+        "trucks",
+        "van",
+        "vans",
+        "bus",
+        "buses",
+        "taxi",
+        "taxis",
+        "bike",
+        "bikes",
+        "bicycle",
+        "bicycles",
+        "motorcycle",
+        "motorcycles",
+        "scooter",
+        "scooters",
+        "train",
+        "trains",
+        "tram",
+        "trams",
+        "subway",
+        "metro",
+        "plane",
+        "planes",
+        "aircraft",
+        "jet",
+        "jets",
+        "helicopter",
+        "helicopters",
+        "ship",
+        "ships",
+        "boat",
+        "boats",
+        "yacht",
+        "yachts",
+        "ferry",
+        "ferries",
+        "robot",
+        "robots",
+        "drone",
+        "drones",
+        "android",
+        "androids",
+        "machine",
+        "machines",
+        "device",
+        "devices",
+        "gadget",
+        "gadgets",
+        "terminal",
+        "terminals",
+        "console",
+        "consoles",
+        "server",
+        "servers",
+        "chip",
+        "chips",
+        "implant",
+        "implants",
+        "weaponry",
+        "equipment",
+        "tool",
+        "tools",
+        "tree",
+        "trees",
+        "bush",
+        "bushes",
+        "grass",
+        "flower",
+        "flowers",
+        "rock",
+        "rocks",
+        "stone",
+        "stones",
+        "mountain",
+        "mountains",
+        "river",
+        "rivers",
+        "lake",
+        "lakes",
+        "ocean",
+        "oceans",
+        "sea",
+        "seas",
+        "beach",
+        "beaches",
+        "sand",
+        "dirt",
+        "mud",
+        "snow",
+        "rain",
+        "fog",
+        "cloud",
+        "clouds",
+        "sky",
+        "sun",
+        "moon",
+        "star",
+        "stars",
+        "dog",
+        "dogs",
+        "cat",
+        "cats",
+        "horse",
+        "horses",
+        "cow",
+        "cows",
+        "bird",
+        "birds",
+        "raven",
+        "ravens",
+        "crow",
+        "crows",
+        "wolf",
+        "wolves",
+        "fox",
+        "foxes",
+        "bear",
+        "bears",
+        "snake",
+        "snakes",
+        "spider",
+        "spiders",
+        "animal",
+        "animals",
+        "company",
+        "companies",
+        "corporation",
+        "corporations",
+        "corp",
+        "organization",
+        "organisations",
+        "organisation",
+        "agency",
+        "agencies",
+        "department",
+        "departments",
+        "team",
+        "teams",
+        "squad",
+        "squads",
+        "army",
+        "armies",
+        "police",
+        "government",
+        "governments",
+        "council",
+        "councils",
+        "guild",
+        "guilds",
+        "order",
+        "orders",
+        "faction",
+        "factions",
+        "story",
+        "stories",
+        "chapter",
+        "chapters",
+        "scene",
+        "scenes",
+        "paragraph",
+        "paragraphs",
+        "sentence",
+        "sentences",
+        "narrator",
+        "narration",
+        "player",
+        "players",
+        "character",
+        "characters",
+        "npc",
+        "npcs",
+        "system",
+        "systems",
+        "ai",
+        "model",
+        "models",
+        "prompt",
+        "prompts",
+        "context",
+        "memory",
+        "memories",
+        "card",
+        "cards",
+        "config",
+        "configuration",
+        "morning",
+        "mornings",
+        "afternoon",
+        "afternoons",
+        "evening",
+        "evenings",
+        "night",
+        "nights",
+        "midnight",
+        "noon",
+        "dawn",
+        "dusk",
+        "today",
+        "tomorrow",
+        "yesterday",
+        "week",
+        "weeks",
+        "month",
+        "months",
+        "year",
+        "years",
+        "time",
+        "times",
+        "moment",
+        "moments",
+        "second",
+        "seconds",
+        "minute",
+        "minutes",
+        "hour",
+        "hours",
+        "fire",
+        "fires",
+        "flame",
+        "flames",
+        "smoke",
+        "explosion",
+        "explosions",
+        "blast",
+        "blasts",
+        "rubble",
+        "ruin",
+        "ruins",
+        "wreck",
+        "wreckage",
+        "debris",
+        "blood",
+        "darkness",
+        "shadow",
+        "shadows",
+        "light",
+        "lights",
+        "sound",
+        "sounds",
+        "silence",
+        "air",
+        "wind",
+        "winds",
+      ],
+      vehicles: [
+        "batmobile",
+        "batwing",
+        "batcycle",
+        "tumbler",
+        "quinjet",
+        "blackbird",
+        "xwing",
+        "x-wing",
+        "tiefighter",
+        "tie-fighter",
+        "starfighter",
+        "speeder",
+        "landspeeder",
+        "dropship",
+        "gunship",
+        "shuttle",
+        "freighter",
+        "cruiser",
+        "destroyer",
+        "carrier",
+        "dreadnought",
+        "corvette",
+        "frigate",
+        "submarine",
+        "hovercraft",
+        "mech",
+        "walker",
+        "tank",
+        "apc",
+        "rover",
+        "buggy",
+        "sedan",
+        "coupe",
+        "hatchback",
+        "convertible",
+        "limousine",
+        "ambulance",
+        "firetruck",
+        "bulldozer",
+        "excavator",
+        "tractor",
+        "trailer",
+        "caravan",
+        "motorhome",
+        "rv",
+        "pickup",
+        "jeep",
+        "suv",
+        "minivan",
+        "locomotive",
+        "monorail",
+        "trolley",
+        "cablecar",
+        "gondola",
+        "elevator",
+        "lift",
+        "escalator",
+      ],
+      locations: [
+        "city",
+        "town",
+        "village",
+        "hamlet",
+        "settlement",
+        "kingdom",
+        "realm",
+        "nation",
+        "empire",
+        "republic",
+        "country",
+        "state",
+        "province",
+        "region",
+        "district",
+        "county",
+        "borough",
+        "neighborhood",
+        "neighbourhood",
+        "quarter",
+        "ward",
+        "island",
+        "archipelago",
+        "continent",
+        "world",
+        "planet",
+        "moon",
+        "colony",
+        "station",
+        "outpost",
+        "forest",
+        "woods",
+        "jungle",
+        "grove",
+        "valley",
+        "canyon",
+        "ravine",
+        "mountain",
+        "mount",
+        "peak",
+        "hill",
+        "hills",
+        "plateau",
+        "desert",
+        "wasteland",
+        "marsh",
+        "swamp",
+        "bog",
+        "meadow",
+        "field",
+        "plains",
+        "prairie",
+        "tundra",
+        "glacier",
+        "cave",
+        "cavern",
+        "caverns",
+        "mine",
+        "quarry",
+        "ruins",
+        "river",
+        "creek",
+        "stream",
+        "canal",
+        "lake",
+        "pond",
+        "reservoir",
+        "ocean",
+        "sea",
+        "bay",
+        "gulf",
+        "harbor",
+        "harbour",
+        "port",
+        "dock",
+        "docks",
+        "marina",
+        "beach",
+        "coast",
+        "shore",
+        "cliff",
+        "castle",
+        "palace",
+        "manor",
+        "mansion",
+        "estate",
+        "house",
+        "home",
+        "apartment",
+        "apartments",
+        "flat",
+        "flats",
+        "penthouse",
+        "tower",
+        "fortress",
+        "fort",
+        "citadel",
+        "keep",
+        "temple",
+        "shrine",
+        "church",
+        "cathedral",
+        "chapel",
+        "monastery",
+        "abbey",
+        "cemetery",
+        "graveyard",
+        "crypt",
+        "tomb",
+        "academy",
+        "school",
+        "university",
+        "college",
+        "campus",
+        "hospital",
+        "clinic",
+        "infirmary",
+        "asylum",
+        "prison",
+        "jail",
+        "courthouse",
+        "court",
+        "barracks",
+        "base",
+        "bunker",
+        "laboratory",
+        "lab",
+        "observatory",
+        "factory",
+        "warehouse",
+        "office",
+        "headquarters",
+        "embassy",
+        "consulate",
+        "tavern",
+        "inn",
+        "hotel",
+        "motel",
+        "hostel",
+        "bar",
+        "pub",
+        "cafe",
+        "café",
+        "restaurant",
+        "diner",
+        "bakery",
+        "bookstore",
+        "bookshop",
+        "library",
+        "shop",
+        "store",
+        "market",
+        "mall",
+        "supermarket",
+        "club",
+        "nightclub",
+        "theater",
+        "theatre",
+        "cinema",
+        "museum",
+        "gallery",
+        "arena",
+        "stadium",
+        "gym",
+        "park",
+        "plaza",
+        "square",
+        "garden",
+        "farm",
+        "ranch",
+        "airport",
+        "airfield",
+        "hangar",
+        "terminal",
+        "garage",
+        "carpark",
+        "road",
+        "street",
+        "avenue",
+        "lane",
+        "alley",
+        "highway",
+        "motorway",
+        "bridge",
+        "tunnel",
+        "intersection",
+        "ship",
+        "spaceship",
+        "starship",
+        "vessel",
+        "deck",
+        "cabin",
+        "compartment",
+        "cargobay",
+        "cargo-bay",
+        "engineroom",
+        "engine-room",
+        "medbay",
+        "sickbay",
+        "quarters",
+        "schoolyard",
+        "classroom",
+        "cafeteria",
+        "canteen",
+        "dormitory",
+        "dorm",
+        "dorms",
+        "lockerroom",
+        "locker-room",
+        "skyscraper",
+        "rooftop",
+        "roof",
+        "lobby",
+        "foyer",
+        "atrium",
+        "corridor",
+        "hallway",
+      ],
+      roles: [
+        "mr",
+        "mrs",
+        "ms",
+        "miss",
+        "mx",
+        "dr",
+        "doctor",
+        "professor",
+        "prof",
+        "officer",
+        "captain",
+        "commander",
+        "lieutenant",
+        "sergeant",
+        "corporal",
+        "general",
+        "admiral",
+        "agent",
+        "detective",
+        "inspector",
+        "constable",
+        "deputy",
+        "sheriff",
+        "marshal",
+        "chief",
+        "mayor",
+        "governor",
+        "president",
+        "minister",
+        "senator",
+        "representative",
+        "judge",
+        "justice",
+        "attorney",
+        "lawyer",
+        "prosecutor",
+        "defender",
+        "king",
+        "queen",
+        "prince",
+        "princess",
+        "emperor",
+        "empress",
+        "duke",
+        "duchess",
+        "count",
+        "countess",
+        "baron",
+        "baroness",
+        "lord",
+        "lady",
+        "sir",
+        "dame",
+        "knight",
+        "father",
+        "mother",
+        "brother",
+        "sister",
+        "reverend",
+        "priest",
+        "pastor",
+        "bishop",
+        "cardinal",
+        "imam",
+        "rabbi",
+        "monk",
+        "nun",
+        "coach",
+        "teacher",
+        "tutor",
+        "principal",
+        "dean",
+        "nurse",
+        "surgeon",
+        "medic",
+        "paramedic",
+        "bartender",
+        "waiter",
+        "waitress",
+        "chef",
+        "cook",
+        "clerk",
+        "cashier",
+        "manager",
+        "director",
+        "ceo",
+        "boss",
+        "foreman",
+        "guard",
+        "soldier",
+        "marine",
+        "pilot",
+        "driver",
+        "engineer",
+        "scientist",
+        "technician",
+        "mechanic",
+        "hacker",
+        "mercenary",
+        "master",
+        "mistress",
+        "apprentice",
+        "student",
+        "warden",
+        "keeper",
+        "ranger",
+        "hunter",
+        "tracker",
+        "scout",
+      ],
+      meta: [
+        "story",
+        "narrative",
+        "narration",
+        "narrator",
+        "scene",
+        "chapter",
+        "paragraph",
+        "prompt",
+        "instruction",
+        "instructions",
+        "author",
+        "authors",
+        "note",
+        "memory",
+        "context",
+        "frontmemory",
+        "plot",
+        "essentials",
+        "storycard",
+        "storycards",
+        "card",
+        "cards",
+        "script",
+        "scripts",
+        "input",
+        "output",
+        "library",
+        "modifier",
+        "system",
+        "ai",
+        "model",
+        "dungeon",
+        "adventure",
+        "scenario",
+        "turn",
+        "turns",
+        "action",
+        "actions",
+        "response",
+        "responses",
+        "retry",
+        "retries",
+        "edit",
+        "edits",
+        "generation",
+        "generations",
+        "token",
+        "tokens",
+        "player",
+        "user",
+        "protagonist",
+        "viewpoint",
+        "pov",
+        "camera",
+        "prose",
+        "dialogue",
+        "description",
+      ],
+      temporal: [
+        "today",
+        "tomorrow",
+        "yesterday",
+        "tonight",
+        "morning",
+        "afternoon",
+        "evening",
+        "night",
+        "midnight",
+        "noon",
+        "dawn",
+        "sunrise",
+        "sunset",
+        "dusk",
+        "twilight",
+        "day",
+        "days",
+        "week",
+        "weeks",
+        "month",
+        "months",
+        "year",
+        "years",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+        "spring",
+        "summer",
+        "autumn",
+        "fall",
+        "winter",
+        "later",
+        "earlier",
+        "soon",
+        "recently",
+        "eventually",
+        "immediately",
+        "suddenly",
+        "meanwhile",
+        "afterward",
+        "afterwards",
+        "before",
+        "after",
+        "during",
+        "while",
+        "when",
+        "then",
+        "now",
+        "once",
+        "twice",
+        "first",
+        "second",
+        "third",
+        "next",
+        "last",
+        "previous",
+        "current",
+        "future",
+        "past",
+        "present",
+      ],
+      collectives: [
+        "everyone",
+        "everybody",
+        "someone",
+        "somebody",
+        "anyone",
+        "anybody",
+        "nobody",
+        "people",
+        "crowd",
+        "crowds",
+        "group",
+        "groups",
+        "team",
+        "teams",
+        "squad",
+        "squads",
+        "family",
+        "families",
+        "police",
+        "guards",
+        "soldiers",
+        "staff",
+        "crew",
+        "crews",
+        "audience",
+        "audiences",
+        "class",
+        "classes",
+        "students",
+        "workers",
+        "customers",
+        "patrons",
+        "citizens",
+        "villagers",
+        "townsfolk",
+        "survivors",
+        "refugees",
+        "enemies",
+        "allies",
+        "friends",
+        "strangers",
+      ]
+    };
+    return this._expandedLexicons;
+  }
+
+  static expandedLexiconSet(name) {
+    if (!this._expandedLexiconSets) this._expandedLexiconSets = {};
+    if (this._expandedLexiconSets[name]) return this._expandedLexiconSets[name];
+    const map = {};
+    (this.expandedLexicons()[name] || []).forEach(word => { map[String(word).toLowerCase()] = true; });
+    this._expandedLexiconSets[name] = map;
+    return map;
+  }
+
+  static knownPlayerNames() {
+    const out = {};
+    if (typeof info !== "undefined" && info && Array.isArray(info.characterNames)) {
+      info.characterNames.forEach(name => {
+        const n = this.cleanName(name).toLowerCase();
+        if (n) out[n] = true;
+      });
+    }
+    if (state && Array.isArray(state.placeholders)) {
+      state.placeholders.forEach(p => {
+        if (!p || !p.answer) return;
+        const q = String(p.question || "").toLowerCase();
+        if (!/(?:name|character|protagonist|player)/.test(q)) return;
+        const n = this.cleanName(p.answer).toLowerCase();
+        if (n) out[n] = true;
+      });
+    }
+    return out;
+  }
+
+  static isPlayerControlledName(name) {
+    const target = this.cleanName(name).toLowerCase();
+    if (!target) return false;
+    const players = this.knownPlayerNames();
+    if (players[target]) return true;
+    const first = target.split(/\s+/)[0];
+    return Object.keys(players).some(k => k.split(/\s+/)[0] === first && first.length > 2);
+  }
+
+  static isExpandedNonPerson(name) {
+    const n = this.cleanName(name).toLowerCase();
+    if (!n) return true;
+    const parts = n.split(/\s+/);
+    const categories = ["objects", "vehicles", "meta", "temporal", "collectives"];
+    for (let i = 0; i < categories.length; i++) {
+      const set = this.expandedLexiconSet(categories[i]);
+      if (set[n]) return true;
+      if (parts.length === 1 && set[parts[0]]) return true;
+    }
+    return false;
+  }
+
+  static hasLocationTypeToken(name) {
+    const parts = this.cleanName(name).toLowerCase().split(/\s+/);
+    const set = this.expandedLexiconSet("locations");
+    return parts.some(p => !!set[p]);
+  }
+
+  static isVehicleLikeName(name, surroundingText = "") {
+    const n = this.cleanName(name);
+    if (!n) return false;
+    const lower = n.toLowerCase();
+    const set = this.expandedLexiconSet("vehicles");
+    if (set[lower] || lower.split(/\s+/).some(p => set[p])) return true;
+    const escaped = this.escapeRegExp(n);
+    return new RegExp(`\\b(?:vehicle|car|truck|van|motorcycle|bike|jet|aircraft|ship|boat|starship|spaceship|shuttle|cruiser|freighter|tank|mech|rover)\\s+(?:called|named)?\\s*${escaped}\\b|\\b(?:drive|drives|drove|pilot|pilots|flew|fly|flies|board|boards|boarded|park|parks|parked)\\s+(?:the\\s+)?${escaped}\\b`, "i").test(String(surroundingText || ""));
+  }
+
+  static rolePrefixPattern() {
+    if (this._rolePrefixPattern) return this._rolePrefixPattern;
+    const source = this.expandedLexicons().roles
+      .filter(x => x.length > 1)
+      .map(x => this.escapeRegExp(x).replace(/\\-/g, "[- ]"))
+      .sort((a, b) => b.length - a.length)
+      .join("|");
+    this._rolePrefixPattern = new RegExp(`\\b(?:${source})\\.?\\s+([A-Z][A-Za-z0-9'’\\-]+(?:\\s+[A-Z][A-Za-z0-9'’\\-]+){0,2})\\b`, "gi");
+    return this._rolePrefixPattern;
+  }
+
+  static registerAlias(alias, canonical) {
+    if (!this.enabled("AliasDetection")) return;
+    const a = this.cleanName(alias);
+    const c = this.cleanName(canonical);
+    if (!a || !c || !state.world.npcs[c] || a.toLowerCase() === c.toLowerCase()) return;
+    if (this.isPlayerControlledName(a) || this.isExpandedNonPerson(a)) return;
+    const key = a.toLowerCase();
+    const existing = state.emergence.aliases[key];
+    if (existing && existing !== c) {
+      state.emergence.aliases[key] = "__ambiguous__";
+      return;
+    }
+    const direct = Object.keys(state.world.npcs).filter(n => n.toLowerCase() === key || n.split(/\s+/)[0].toLowerCase() === key);
+    if (direct.length > 1 || (direct.length === 1 && direct[0] !== c)) {
+      state.emergence.aliases[key] = "__ambiguous__";
+      return;
+    }
+    state.emergence.aliases[key] = c;
+    const npc = state.world.npcs[c];
+    if (npc.aliases.indexOf(a) < 0) {
+      npc.aliases.push(a);
+      while (npc.aliases.length > 8) npc.aliases.shift();
+    }
+  }
+
+  static scanAliases(text) {
+    if (!this.enabled("AliasDetection") || !text) return;
+    const sample = String(text).slice(-5000);
+    Object.keys(state.world.npcs).forEach(name => {
+      const parts = name.split(/\s+/);
+      if (parts.length < 2) return;
+      if (!new RegExp(`\\b${this.escapeRegExp(name)}\\b`, "i").test(sample)) return;
+      this.registerAlias(parts[0], name);
+      const last = parts[parts.length - 1];
+      if (last.length >= 3) this.registerAlias(last, name);
+    });
+  }
+
+  static mentionRegexForNpc(name) {
+    const npc = state.world.npcs[name];
+    const forms = [name].concat(npc && Array.isArray(npc.aliases) ? npc.aliases : []);
+    const seen = {};
+    forms.forEach(f => { if (f) seen[String(f).toLowerCase()] = f; });
+    const source = Object.keys(seen).map(k => this.escapeRegExp(seen[k])).sort((a,b) => b.length - a.length).join("|");
+    return source ? new RegExp(`\\b(?:${source})\\b`, "i") : null;
+  }
+
+  static explicitExitForName(name, text) {
+    const n = this.escapeRegExp(name);
+    const verbs = "leave(?:s|ing)?|left|exit(?:s|ed|ing)?|depart(?:s|ed|ing)?|walk(?:s|ed|ing)? away|storm(?:s|ed|ing)? out|head(?:s|ed|ing)? out|drive(?:s|d|ing)? away|run(?:s|ning)? off|ran off|disappear(?:s|ed|ing)?|vanish(?:es|ed|ing)?";
+    return new RegExp(`\\b${n}\\b[^.!?;]{0,30}\\b(?:${verbs})\\b|\\b(?:${verbs})[^.!?;]{0,30}\\b${n}\\b`, "i").test(String(text || ""));
+  }
+
+  static explicitArrivalForName(name, text) {
+    const n = this.escapeRegExp(name);
+    const verbs = "enter(?:s|ed|ing)?|arriv(?:e|es|ed|ing)|approach(?:es|ed|ing)?|return(?:s|ed|ing)?|appear(?:s|ed|ing)?|come(?:s|ing)? in|came in|walk(?:s|ed|ing)? in|step(?:s|ped|ping)? in|join(?:s|ed|ing)?";
+    return new RegExp(`\\b${n}\\b[^.!?;]{0,28}\\b(?:${verbs})\\b|\\b(?:${verbs})[^.!?;]{0,28}\\b${n}\\b`, "i").test(String(text || ""));
+  }
+
+  static updateSceneRoster(text) {
+    if (!this.enabled("SceneContinuity")) return this.getPresentSceneNames(text);
+    const turn = state.emergence.turnCount || this.actionCount();
+    const location = state.emergence.currentLocation;
+    const sample = String(text || "");
+    const persistence = this.intConfig("PresencePersistence", 2, 0, 4);
+    const explicit = this.getPresentSceneNames(sample);
+    const explicitMap = {};
+    explicit.forEach(name => { explicitMap[name] = true; });
+
+    Object.keys(state.world.npcs).forEach(name => {
+      const key = name.toLowerCase();
+      let item = state.emergence.sceneRoster[key];
+      if (!item) item = state.emergence.sceneRoster[key] = { name, location: "", lastSeenTurn: -999, present: false, confidence: 0 };
+      if (this.explicitExitForName(name, sample)) {
+        item.present = false;
+        item.confidence = 0;
+        item.lastExitTurn = turn;
+        return;
+      }
+      const arrived = this.explicitArrivalForName(name, sample);
+      if (explicitMap[name] || arrived) {
+        item.present = true;
+        item.location = location;
+        item.lastSeenTurn = turn;
+        item.confidence = arrived ? 3 : Math.max(2, item.confidence || 0);
+      } else if (item.present) {
+        if (item.location !== location || turn - (item.lastSeenTurn || 0) > persistence) {
+          item.present = false;
+          item.confidence = 0;
+        } else {
+          item.confidence = Math.max(1, (item.confidence || 1) - 1);
+        }
+      }
+    });
+
+    const roster = this.sceneRosterNames();
+    state.emergence.sceneNames = roster;
+    if (turn !== state.emergence.runtimeStats.lastSceneTurn) {
+      state.emergence.runtimeStats.lastSceneTurn = turn;
+      const signature = `${location}|${roster.slice().sort().join(",")}`;
+      const last = state.emergence.sceneHistory[state.emergence.sceneHistory.length - 1];
+      if (!last || last.signature !== signature) {
+        state.emergence.sceneHistory.push({ turn, location, names: roster.slice(0, 12), signature });
+        while (state.emergence.sceneHistory.length > 24) state.emergence.sceneHistory.shift();
+      }
+    }
+    return roster;
+  }
+
+  static sceneRosterNames() {
+    if (!this.enabled("SceneContinuity")) return state.emergence.sceneNames || [];
+    const location = state.emergence.currentLocation;
+    return Object.keys(state.emergence.sceneRoster).map(k => state.emergence.sceneRoster[k]).filter(item =>
+      item && item.present && item.location === location && state.world.npcs[item.name]
+    ).map(item => item.name);
+  }
+
+  static eventCatalog() {
+    if (this._eventCatalog) return this._eventCatalog;
+    const make = source => new RegExp(`\\b(?:${source})\\b`, "i");
+    this._eventCatalog = [
+      { type: "apology", re: make("apologi[sz](?:e|es|ed|ing)?|say(?:s|ing)? sorry|ask(?:s|ed|ing)? forgiveness|beg(?:s|ged|ging)? forgiveness|make(?:s|d|ing)? amends"), trust: 4, grudge: -8, stress: -4, respect: 3, salience: 4 },
+      { type: "gratitude", re: make("thank(?:s|ed|ing)?|show(?:s|ed|ing)? gratitude|express(?:es|ed|ing)? gratitude|appreciat(?:e|es|ed|ing)"), trust: 3, grudge: -2, respect: 4, salience: 2 },
+      { type: "promise", re: make("promise(?:s|d|ing)?|swear(?:s|ing)?|swore|vow(?:s|ed|ing)?|give(?:s|n|ing)? (?:my|your) word"), trust: 2, respect: 2, salience: 5, commitment: true },
+      { type: "forgiveness", re: make("forgiv(?:e|es|en|ing)|accept(?:s|ed|ing)? (?:the |your |my )?apolog(?:y|ies)|pardon(?:s|ed|ing)?|let(?:s|ting)? it go"), trust: 5, grudge: -10, stress: -5, salience: 5 },
+      { type: "rescue", re: make("rescu(?:e|es|ed|ing)|save(?:s|d|ing)?|pull(?:s|ed|ing)? .* to safety|shield(?:s|ed|ing)? .* from|defend(?:s|ed|ing)? .* from|protect(?:s|ed|ing)? .* from"), trust: 8, grudge: -4, respect: 7, fear: -3, salience: 7 },
+      { type: "comfort", re: make("comfort(?:s|ed|ing)?|reassur(?:e|es|ed|ing)|consol(?:e|es|ed|ing)|calm(?:s|ed|ing)?|stay(?:s|ed|ing)? with"), trust: 4, stress: -7, respect: 2, salience: 3 },
+      { type: "gift", re: make("giv(?:e|es|ing)|gave|offer(?:s|ed|ing)?|hand(?:s|ed|ing)?|gift(?:s|ed|ing)?|bring(?:s|ing)?|brought"), trust: 2, respect: 1, salience: 2, requiresGiftObject: true },
+      { type: "rejection", re: make("reject(?:s|ed|ing)?|turn(?:s|ed|ing)? .* down|refus(?:e|es|ed|ing)? .* (?:kiss|date|romance|advance)|push(?:es|ed|ing)? .* away"), attraction: -8, stress: 4, salience: 4 },
+      { type: "abandonment", re: make("abandon(?:s|ed|ing)?|leave(?:s|ing)? .* behind|left .* behind|walk(?:s|ed|ing)? out on|desert(?:s|ed|ing)?"), trust: -12, grudge: 12, stress: 10, salience: 7 },
+      { type: "boundary", re: make("set(?:s|ting)? a boundary|ask(?:s|ed|ing)? .* to stop|tell(?:s|ing)? .* to stop|told .* to stop|say(?:s|ing)? no|said no|refus(?:e|es|ed|ing)?"), salience: 5, boundary: true },
+      { type: "boundary_violation", re: make("ignore(?:s|d|ing)? .* boundary|ignore(?:s|d|ing)? .* (?:no|refusal)|keep(?:s|ing)? pushing|kept pushing|force(?:s|d|ing)? anyway|refus(?:e|es|ed|ing)? to stop"), trust: -14, grudge: 16, stress: 14, respect: -12, fear: 7, salience: 8 },
+      { type: "confession", re: make("confess(?:es|ed|ing)?|admit(?:s|ted|ting)?|tell(?:s|ing)? the truth|told the truth|come(?:s|ing)? clean|came clean"), trust: 4, respect: 3, salience: 5 },
+      { type: "secret_share", re: make("confid(?:e|es|ed|ing)|share(?:s|d|ing)? a secret|tell(?:s|ing)? .* in confidence|trust(?:s|ed|ing)? .* with"), trust: 5, respect: 2, salience: 5 },
+      { type: "insult", re: make("insult(?:s|ed|ing)?|mock(?:s|ed|ing)?|humiliat(?:e|es|ed|ing)|belittl(?:e|es|ed|ing)|ridicul(?:e|es|ed|ing)"), trust: -6, grudge: 7, stress: 5, respect: -8, salience: 4 },
+      { type: "threat", re: make("threaten(?:s|ed|ing)?|intimidat(?:e|es|ed|ing)|blackmail(?:s|ed|ing)?"), trust: -9, grudge: 10, stress: 9, respect: -6, fear: 8, salience: 6 },
+      { type: "rescue_failure", re: make("fail(?:s|ed|ing)? to help|leave(?:s|ing)? .* to die|left .* to die|refus(?:e|es|ed|ing)? to help|stand(?:s|ing)? by while|stood by while"), trust: -10, grudge: 9, stress: 7, respect: -8, salience: 7 }
+    ];
+    return this._eventCatalog;
+  }
+
+  static giftObjectPattern() {
+    if (!this._giftObjectPattern) this._giftObjectPattern = /\b(?:gift|present|flower|flowers|rose|roses|ring|necklace|bracelet|book|letter|note|food|meal|drink|coffee|tea|money|coin|coins|key|weapon|sword|knife|phone|photo|photograph|jacket|coat|medicine|medication)\b/i;
+    return this._giftObjectPattern;
+  }
+
+  static directedClauseHits(clause, target, eventRe) {
+    const t = this.escapeRegExp(target);
+    const source = eventRe.source;
+    const a = new RegExp(`\\b(?:you|i)\\b[^.!?;]{0,24}(?:${source})[^.!?;]{0,60}\\b${t}\\b`, "i");
+    const b = new RegExp(`\\b(?:you|i)\\b[^.!?;]{0,18}\\b${t}\\b[^.!?;]{0,28}(?:${source})`, "i");
+    const c = new RegExp(`\\b(?:${source})[^.!?;]{0,20}\\b(?:to|for|at|with|toward|towards)\\s+${t}\\b`, "i");
+    return a.test(clause) || b.test(clause) || c.test(clause);
+  }
+
+  static extractNuancedPlayerEvents(inputText) {
+    if (!this.enabled("RelationshipNuance") || !inputText) return [];
+    const clauses = this.splitClauses(inputText);
+    const names = Object.keys(state.world.npcs);
+    const catalog = this.eventCatalog();
+    const events = [];
+    clauses.forEach(clause => {
+      if (!/\b(?:you|i)\b/i.test(clause)) return;
+      const mentioned = names.filter(name => {
+        const re = this.mentionRegexForNpc(name);
+        return re && re.test(clause);
+      });
+      mentioned.forEach(target => {
+        catalog.forEach(def => {
+          def.re.lastIndex = 0;
+          if (!def.re.test(clause) || !this.directedClauseHits(clause, target, def.re)) return;
+          if (def.requiresGiftObject && !this.giftObjectPattern().test(clause)) return;
+          const core = this.targetedPlayerEvents(clause);
+          let soft = false;
+          if ((def.type === "insult" || def.type === "threat") && core.some(x => x.target === target && x.type === "coercion")) return;
+          if (["rescue","comfort","apology","gratitude"].indexOf(def.type) >= 0 && core.some(x => x.target === target && x.type === "respect")) soft = true;
+          events.push({ target, def, clause, soft });
+        });
+      });
+    });
+    return events;
+  }
+
+  static eventFingerprint(target, type, clause) {
+    return `${this.actionCount()}:${String(target).toLowerCase()}:${type}:${this.hashText(clause)}`;
+  }
+
+  static rememberEventFingerprint(fp) {
+    const turn = state.emergence.turnCount || this.actionCount();
+    state.emergence.recentEventHashes[fp] = turn;
+    Object.keys(state.emergence.recentEventHashes).forEach(key => {
+      if (turn - state.emergence.recentEventHashes[key] > 8) delete state.emergence.recentEventHashes[key];
+    });
+  }
+
+  static memoryLedgerLimit() {
+    return state.emergence.config.MemoryDepth === "Light" ? 8 : state.emergence.config.MemoryDepth === "Deep" ? 24 : 14;
+  }
+
+  static recordStructuredMemory(name, type, text, salience = 3, source = "story") {
+    const npc = state.world.npcs[name];
+    if (!npc || !text) return;
+    this.normalizeNpc(name);
+    const excerpt = this.excerpt(text, 150);
+    const hash = `${type}:${this.hashText(excerpt.toLowerCase())}`;
+    const last = npc.memoryLedger[npc.memoryLedger.length - 1];
+    if (last && last.hash === hash) return;
+    npc.memoryLedger.push({
+      turn: state.emergence.turnCount || this.actionCount(),
+      location: state.emergence.currentLocation,
+      type, text: excerpt,
+      salience: Math.max(1, Math.min(10, salience)),
+      source, hash
+    });
+    const cap = this.memoryLedgerLimit();
+    if (npc.memoryLedger.length > cap) {
+      const ranked = npc.memoryLedger.map((m, i) => ({m, i, rank:(m.salience || 1) * 1000 + i}))
+        .sort((a,b) => b.rank - a.rank).slice(0, cap).sort((a,b) => a.i - b.i);
+      npc.memoryLedger = ranked.map(x => x.m);
+    }
+    this.pushMemory(npc, `${type}: ${excerpt}`);
+  }
+
+  static addGlobalEvent(name, type, text, salience = 3) {
+    state.emergence.eventLedger.push({
+      turn: state.emergence.turnCount || this.actionCount(),
+      npc: name, type,
+      location: state.emergence.currentLocation,
+      text: this.excerpt(text, 160),
+      salience
+    });
+    const cap = this.intConfig("MaxEventLedger", 90, 30, 160);
+    if (state.emergence.eventLedger.length > cap) {
+      const removed = state.emergence.eventLedger.length - cap;
+      state.emergence.eventLedger.splice(0, removed);
+      state.emergence.runtimeStats.prunedEvents += removed;
+    }
+  }
+
+  static addCommitment(name, clause) {
+    const npc = state.world.npcs[name];
+    if (!npc) return;
+    const value = this.excerpt(clause, 120);
+    const hash = this.hashText(value.toLowerCase());
+    if (npc.commitments.some(c => c.hash === hash && c.status === "open")) return;
+    npc.commitments.push({hash, text:value, turn:state.emergence.turnCount, status:"open"});
+    while (npc.commitments.length > 8) npc.commitments.shift();
+  }
+
+  static recordBoundary(name, clause) {
+    const npc = state.world.npcs[name];
+    if (!npc) return;
+    const value = this.excerpt(clause, 120);
+    const hash = this.hashText(value.toLowerCase());
+    if (npc.boundaries.some(b => b.hash === hash)) return;
+    npc.boundaries.push({hash, text:value, turn:state.emergence.turnCount});
+    while (npc.boundaries.length > 8) npc.boundaries.shift();
+  }
+
+  static recalculateRelationshipTone(name) {
+    const npc = state.world.npcs[name];
+    if (!npc) return "Neutral";
+    let tone = "Neutral";
+    if (npc.grudge >= 70 || npc.trust <= 20) tone = "Hostile";
+    else if (npc.fear >= 65 && npc.trust < 50) tone = "Wary";
+    else if (npc.trust >= 78 && npc.grudge <= 15) tone = npc.attraction >= 60 ? "Intimate" : "Trusted";
+    else if (npc.attraction >= 45 && npc.trust >= 45) tone = "Drawn";
+    else if (npc.respect >= 70 && npc.trust >= 55) tone = "Respectful";
+    else if (npc.grudge >= 35) tone = "Strained";
+    else if (npc.trust >= 60) tone = "Warm";
+    else if (npc.familiarity < 20) tone = "Unfamiliar";
+    npc.relationshipTone = tone;
+    return tone;
+  }
+
+  static applyNuancedPlayerEvents(inputText) {
+    this.extractNuancedPlayerEvents(inputText).forEach(ev => {
+      const fp = this.eventFingerprint(ev.target, ev.def.type, ev.clause);
+      if (state.emergence.recentEventHashes[fp]) return;
+      this.rememberEventFingerprint(fp);
+      const npc = state.world.npcs[ev.target];
+      if (!npc) return;
+      const factor = ev.soft ? 0.35 : 1;
+      const d = ev.def;
+      if (this.enabled("GrudgeTracking")) {
+        if (d.trust) this.updateStat(npc, "trust", Math.round(d.trust * factor));
+        if (d.grudge) this.updateStat(npc, "grudge", Math.round(d.grudge * factor));
+      }
+      if (d.stress) this.updateStat(npc, "stress", Math.round(d.stress * factor));
+      if (d.respect) this.updateStat(npc, "respect", Math.round(d.respect * factor));
+      if (d.fear) this.updateStat(npc, "fear", Math.round(d.fear * factor));
+      if (d.attraction && this.enabled("RomanceEngine")) this.updateStat(npc, "attraction", Math.round(d.attraction * factor));
+      this.updateStat(npc, "familiarity", Math.max(1, Math.round(2 * factor)));
+      if (d.commitment) this.addCommitment(ev.target, ev.clause);
+      if (d.boundary) this.recordBoundary(ev.target, ev.clause);
+      this.recordStructuredMemory(ev.target, d.type, ev.clause, d.salience || 3, "player");
+      this.addGlobalEvent(ev.target, d.type, ev.clause, d.salience || 3);
+      this.recalculateRelationshipTone(ev.target);
+      this.updateThreatState(ev.target);
+      this.markNpcDirty(ev.target);
+    });
+  }
+
+  static relationshipSnapshot(name) {
+    const npc = state.world.npcs[name];
+    if (!npc) return null;
+    return {
+      trust:Math.round(npc.trust), grudge:Math.round(npc.grudge), attraction:Math.round(npc.attraction),
+      respect:Math.round(npc.respect), fear:Math.round(npc.fear), familiarity:Math.round(npc.familiarity),
+      tone:this.recalculateRelationshipTone(name)
+    };
+  }
+
+  static trackRelationshipSnapshot(name, reason) {
+    const snap = this.relationshipSnapshot(name);
+    if (!snap) return;
+    const signature = `${name}|${snap.tone}|${Math.floor(snap.trust/10)}|${Math.floor(snap.grudge/10)}|${Math.floor(snap.attraction/10)}`;
+    const last = state.emergence.relationshipHistory[state.emergence.relationshipHistory.length - 1];
+    if (last && last.signature === signature) return;
+    state.emergence.relationshipHistory.push({turn:state.emergence.turnCount, name, reason:reason || "", snapshot:snap, signature});
+    while (state.emergence.relationshipHistory.length > 60) state.emergence.relationshipHistory.shift();
+  }
+
+  static noteNpcMention(name) {
+    const npc = state.world.npcs[name];
+    if (npc) npc.mentionCount = (npc.mentionCount || 0) + 1;
+  }
+
+  static noteNpcScene(name) {
+    const npc = state.world.npcs[name];
+    if (!npc) return;
+    if (npc._lastSceneCountTurn !== state.emergence.turnCount) {
+      npc.sceneCount = (npc.sceneCount || 0) + 1;
+      npc._lastSceneCountTurn = state.emergence.turnCount;
+      this.updateStat(npc, "familiarity", 1);
+    }
+  }
+
+  static updateLocationVisit(name, occupants) {
+    const loc = state.world.locations[name];
+    if (!loc) return;
+    if (loc._lastVisitTurn !== state.emergence.turnCount) {
+      loc.visitCount = (loc.visitCount || 0) + 1;
+      loc._lastVisitTurn = state.emergence.turnCount;
+    }
+    (occupants || []).forEach(n => { if (loc.recentOccupants.indexOf(n) < 0) loc.recentOccupants.push(n); });
+    while (loc.recentOccupants.length > 10) loc.recentOccupants.shift();
+  }
+
+  static strongestStructuredMemories(name, limit = 3) {
+    const npc = state.world.npcs[name];
+    if (!npc || !npc.memoryLedger.length) return [];
+    return npc.memoryLedger.slice().sort((a,b) =>
+      ((b.salience || 1) * 1000 + (b.turn || 0)) - ((a.salience || 1) * 1000 + (a.turn || 0))
+    ).slice(0, limit);
+  }
+
+  static continuityLineForNpc(name) {
+    const npc = state.world.npcs[name];
+    if (!npc) return "";
+    const detail = state.emergence.config.ContextDetail;
+    let line = `${name}: ${this.recalculateRelationshipTone(name)}; trust ${Math.round(npc.trust)}, grudge ${Math.round(npc.grudge)}`;
+    if (detail !== "Lean") {
+      if (npc.respect <= 30 || npc.respect >= 70) line += `, respect ${Math.round(npc.respect)}`;
+      if (npc.fear >= 35) line += `, fear ${Math.round(npc.fear)}`;
+      if (this.enabled("RomanceEngine") && npc.attraction >= 25) line += `, ${this.relationshipStage(npc.attraction)}`;
+    }
+    if (detail === "Rich") {
+      const mem = this.strongestStructuredMemories(name, 1)[0];
+      if (mem && mem.salience >= 5) line += `; remembers ${this.excerpt(mem.text, 70)}`;
+      const open = npc.commitments.filter(c => c.status === "open").slice(-1)[0];
+      if (open) line += `; open promise: ${this.excerpt(open.text, 60)}`;
+    }
+    return line;
+  }
+
+  static boundedActiveNpcNames() {
+    const roster = this.sceneRosterNames();
+    if (roster.length) return roster.slice(0, 8);
+    return Object.keys(state.world.npcs)
+      .sort((a,b) => (state.world.npcs[b].lastSeenTurn || 0) - (state.world.npcs[a].lastSeenTurn || 0))
+      .slice(0, 6);
+  }
+
+  static repairExpandedState() {
+    if (!this.enabled("StateRepair")) return;
+    const turn = state.emergence.turnCount || this.actionCount();
+    if (state.emergence.runtimeStats.lastRepairTurn === turn) return;
+    state.emergence.runtimeStats.lastRepairTurn = turn;
+    let repairs = 0;
+    Object.keys(state.world.npcs).forEach(name => {
+      const npc = this.normalizeNpc(name);
+      ["trust","grudge","stress","composure","attraction","respect","fear","familiarity"].forEach(key => {
+        const before = npc[key];
+        npc[key] = this.clamp(npc[key], 0, 100);
+        if (before !== npc[key]) repairs++;
+      });
+      Object.keys(npc.undercurrents).forEach(target => {
+        if (!state.world.npcs[target] || target === name) { delete npc.undercurrents[target]; repairs++; }
+        else npc.undercurrents[target] = Math.max(-100, Math.min(100, Number(npc.undercurrents[target]) || 0));
+      });
+      this.recalculateRelationshipTone(name);
+    });
+    Object.keys(state.emergence.aliases).forEach(alias => {
+      const target = state.emergence.aliases[alias];
+      if (target !== "__ambiguous__" && !state.world.npcs[target]) { delete state.emergence.aliases[alias]; repairs++; }
+    });
+    Object.keys(state.emergence.sceneRoster).forEach(key => {
+      const item = state.emergence.sceneRoster[key];
+      if (!item || !state.world.npcs[item.name]) { delete state.emergence.sceneRoster[key]; repairs++; }
+    });
+    const before = Object.keys(state.emergence.nameCandidates).length + Object.keys(state.emergence.locationCandidates).length;
+    Object.keys(state.emergence.nameCandidates).forEach(key => {
+      const c = state.emergence.nameCandidates[key];
+      if (!c || turn - (c.lastTurn || 0) > 16 || this.isExpandedNonPerson(c.name) || this.isPlayerControlledName(c.name)) delete state.emergence.nameCandidates[key];
+    });
+    Object.keys(state.emergence.locationCandidates).forEach(key => {
+      const c = state.emergence.locationCandidates[key];
+      if (!c || turn - (c.lastTurn || 0) > 20) delete state.emergence.locationCandidates[key];
+    });
+    const after = Object.keys(state.emergence.nameCandidates).length + Object.keys(state.emergence.locationCandidates).length;
+    state.emergence.runtimeStats.prunedCandidates += before - after;
+    state.emergence.runtimeStats.repairs += repairs;
+    if (repairs && this.enabled("DebugMode")) this.debug(`State repair adjusted ${repairs} item(s).`);
+  }
+
+  static pruneExpandedState() {
+    const cap = this.intConfig("MaxEventLedger", 90, 30, 160);
+    if (state.emergence.eventLedger.length > cap) state.emergence.eventLedger = state.emergence.eventLedger.slice(-cap);
+    if (state.emergence.sceneHistory.length > 24) state.emergence.sceneHistory = state.emergence.sceneHistory.slice(-24);
+    if (state.emergence.relationshipHistory.length > 60) state.emergence.relationshipHistory = state.emergence.relationshipHistory.slice(-60);
+    if (state.emergence.gossipLog.length > 16) state.emergence.gossipLog = state.emergence.gossipLog.slice(-16);
+    if (state.emergence.debugLog.length > 30) state.emergence.debugLog = state.emergence.debugLog.slice(-30);
+  }
+
+  static runExpandedMaintenance(turnCount) {
+    if (!turnCount) return;
+    if (turnCount % 5 === 0) {
+      this.repairExpandedState();
+      this.pruneExpandedState();
+    }
+    if (turnCount % 3 === 0) this.boundedActiveNpcNames().forEach(name => this.recalculateRelationshipTone(name));
+  }
+
+  static expandedDiagnostics() {
+    const e = state.emergence;
+    return [
+      `Schema ${e.schemaVersion || 3}`,
+      `Scene roster ${this.sceneRosterNames().length} active / ${Object.keys(e.sceneRoster || {}).length} cached`,
+      `Aliases ${Object.keys(e.aliases || {}).filter(k => e.aliases[k] !== "__ambiguous__").length} usable`,
+      `Events ${(e.eventLedger || []).length} / ${this.intConfig("MaxEventLedger", 90, 30, 160)}`,
+      `Repairs ${e.runtimeStats ? e.runtimeStats.repairs : 0} | Pruned candidates ${e.runtimeStats ? e.runtimeStats.prunedCandidates : 0}`
+    ].join("\n");
+  }
+
   // ---------------------------------------------------------------------------
   // GENRE / PERIODIC MAINTENANCE
   // ---------------------------------------------------------------------------
@@ -1675,6 +3456,7 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
     if (turnCount <= 3 || turnCount % 8 === 0) this.detectGenre(contextText);
     if (turnCount % 4 === 0) this.decaySocialState();
     if (turnCount % 7 === 0) this.spreadReputation();
+    this.runExpandedMaintenance(turnCount);
     this.maybeQueueReflection();
     this.flushDirtyCards(false);
   }
@@ -1695,8 +3477,10 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
     // Locations claim names before character detection.
     this.discoverLocations(combined);
     this.discoverCharacters(combined);
+    this.scanAliases(combined);
     this.processNpcPresence(visibleText);
     this.applyPlayerInteractions(state.emergence.lastPlayerInput || "", combined);
+    this.applyNuancedPlayerEvents(state.emergence.lastPlayerInput || "");
 
     // Earned security responds to the targeted interaction once, not to passive presence.
     this.targetedPlayerEvents(state.emergence.lastPlayerInput || "").forEach(ev => this.updateEarnedSecurity(ev.target, ev.type));
@@ -1704,6 +3488,10 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
     this.updateUndercurrents(visibleText);
     this.updateLocationConditions(visibleText);
     this.updateWorldState(combined);
+    if (state.emergence.currentLocation !== "Unknown Location" && state.world.locations[state.emergence.currentLocation]) {
+      this.updateLocationVisit(state.emergence.currentLocation, this.sceneRosterNames());
+    }
+    this.sceneRosterNames().forEach(name => this.trackRelationshipSnapshot(name, "scene"));
     this.flushDirtyCards(false);
   }
 
@@ -1735,7 +3523,10 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
       lines.push(`Location: ${e.currentLocation} — ${loc.condition}, ${this.locationAtmosphere(loc)}.`);
     }
     if (this.enabled("NpcColorNotes") && e.sceneNames.length) {
-      e.sceneNames.slice(0, 4).forEach(name => lines.push(this.compactNpcLine(name)));
+      const active = this.enabled("SceneContinuity") ? this.sceneRosterNames() : e.sceneNames;
+      active.slice(0, e.config.ContextDetail === "Rich" ? 5 : 4).forEach(name => {
+        lines.push(this.enabled("RelationshipNuance") ? this.continuityLineForNpc(name) : this.compactNpcLine(name));
+      });
     }
     if (this.enabled("LivingWorldEngine") && e.config.ProtagonistInvolvement !== "Low" && e.gossipLog.length) lines.push(`Social undercurrent: ${e.gossipLog[e.gossipLog.length - 1]}`);
     if (e.pendingNarrativeNudges.length) {
@@ -1750,7 +3541,8 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
     }
     let body = lines.filter(Boolean).join("\n");
     // Front Memory is always included in full, so keep the managed block bounded.
-    if (body.length > 1500) body = body.slice(0, 1497) + "…";
+    const contextCap = e.config.ContextDetail === "Lean" ? 1050 : e.config.ContextDetail === "Rich" ? 1750 : 1450;
+    if (body.length > contextCap) body = body.slice(0, contextCap - 3) + "…";
     return `[[EMERGENCE_OS_BEGIN]]\n${body}\n[[EMERGENCE_OS_END]]`;
   }
 
@@ -1769,7 +3561,7 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
     // AI Dungeon can wrap actions; allow a leading > and optional quote, but the
     // slash command still has to be the first meaningful token.
     const cleaned = s.replace(/^>\s*/, "").replace(/^['"“”]+/, "").trim();
-    const m = cleaned.match(/^\/(help|about|settings|locations|loc|cleanup|forget|undercurrents|drives|threads|factions|reputation|reflections|thoughts|romance|card|npcs|npc|world|debug)\b(?:\s+([^\n]*))?$/i);
+    const m = cleaned.match(/^\/(help|about|settings|locations|loc|cleanup|forget|undercurrents|drives|threads|factions|reputation|reflections|thoughts|romance|card|npcs|npc|world|memory|scene|debug)\b(?:\s+([^\n]*))?$/i);
     if (m) return { command: m[1].toLowerCase(), arg: this.cleanName(m[2] || "") };
     if (/^\/[A-Za-z]/.test(cleaned)) return { command: "__unknown__", arg: "" };
     return null;
@@ -1779,12 +3571,12 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
     if (!parsed) return null;
     const cmd = parsed.command, arg = parsed.arg;
     if (cmd === "__unknown__") return "🤖 Command not recognized. Type /help for the EMERGENCE OS command list.";
-    if (cmd === "help") return "⚙️ EMERGENCE OS\n/help — command list\n/about — project + GitHub\n/npc NAME — dossier\n/npcs — tracked NPCs\n/card NAME — create/link character card\n/forget NAME — stop tracking an NPC\n/locations — tracked locations\n/loc NAME — set/create current location\n/world — world state\n/romance [NAME] — romantic standing\n/undercurrents — NPC↔NPC dynamics\n/factions — mutual coalitions/rivalry triangles\n/reputation — overall player standing\n/reflections NAME — private reflections\n/settings — config summary\n/cleanup — remove obvious false positives\n/debug — diagnostics when DebugMode is enabled";
+    if (cmd === "help") return "⚙️ EMERGENCE OS\n/help — command list\n/about — project + GitHub\n/npc NAME — dossier\n/npcs — tracked NPCs\n/card NAME — create/link character card\n/forget NAME — stop tracking an NPC\n/locations — tracked locations\n/loc NAME — set/create current location\n/world — world state\n/scene — current scene roster\n/memory NAME — structured relationship memories\n/romance [NAME] — romantic standing\n/undercurrents — NPC↔NPC dynamics\n/factions — mutual coalitions/rivalry triangles\n/reputation — overall player standing\n/reflections NAME — private reflections\n/settings — config summary\n/cleanup — remove obvious false positives\n/debug — diagnostics when DebugMode is enabled";
     if (cmd === "about") return `⚙️ EMERGENCE OS
 Living NPC agency, persistent relationships, continuity and location memory.
 GitHub: ${this.projectUrl()}
 Use /help for commands or /settings for the current configuration.`;
-    if (cmd === "settings") return `🎛️ SETTINGS\nEdit the “⚙️ EMERGENCE OS — Config” Story Card.\nGenre=${state.emergence.config.Genre} (detected ${state.emergence.detectedGenre})\nNPCBrainSystem=${state.emergence.config.NPCBrainSystem} | HumanAgency=${state.emergence.config.HumanAgency} | Autonomy=${state.emergence.config.AutonomyLevel}\nLivingWorld=${state.emergence.config.LivingWorldEngine} | Romance=${state.emergence.config.RomanceEngine} (${state.emergence.config.RomancePacing})\nLocations=${state.emergence.config.LocationCards}/${state.emergence.config.LocationAutoUpdate}\nDetection=${state.emergence.config.DetectionSensitivity} | CardRefresh=${state.emergence.config.CardRefreshInterval}\nFull explanations are in the card notes.`;
+    if (cmd === "settings") return `🎛️ SETTINGS\nEdit the “⚙️ EMERGENCE OS — Config” Story Card.\nGenre=${state.emergence.config.Genre} (detected ${state.emergence.detectedGenre})\nNPCBrainSystem=${state.emergence.config.NPCBrainSystem} | HumanAgency=${state.emergence.config.HumanAgency} | Autonomy=${state.emergence.config.AutonomyLevel}\nLivingWorld=${state.emergence.config.LivingWorldEngine} | Romance=${state.emergence.config.RomanceEngine} (${state.emergence.config.RomancePacing})\nLocations=${state.emergence.config.LocationCards}/${state.emergence.config.LocationAutoUpdate}\nDetection=${state.emergence.config.DetectionSensitivity} | CardRefresh=${state.emergence.config.CardRefreshInterval}\nSceneContinuity=${state.emergence.config.SceneContinuity} (${state.emergence.config.PresencePersistence}) | Nuance=${state.emergence.config.RelationshipNuance} | Memory=${state.emergence.config.MemoryDepth}\nStateRepair=${state.emergence.config.StateRepair} | ContextDetail=${state.emergence.config.ContextDetail}\nFull explanations are in the card notes.`;
     if (cmd === "card") return arg ? this.generateCharacterCard(arg) : "Usage: /card NAME";
     if (cmd === "loc") {
       if (!arg) return "Usage: /loc LOCATION";
@@ -1806,7 +3598,7 @@ Use /help for commands or /settings for the current configuration.`;
       if (!name) return `🤖 NPC “${arg}” not found. Try /npcs.`;
       const npc = state.world.npcs[name];
       const uc = this.strongestUndercurrent(name);
-      let out = `👤 ${name}\n❤️ Trust ${Math.round(npc.trust)}/100 | 💢 Grudge ${Math.round(npc.grudge)}/100 | 🫀 Stress ${Math.round(npc.stress)}/100\n🛡️ ${npc.threatState} | 🧠 Bias ${npc.cognitiveBias} | 🔗 Attachment ${npc.attachmentStyle}\n📍 Last seen: ${npc.lastSeenLocation || "Unknown"} (turn ${npc.lastSeenTurn || 0})`;
+      let out = `👤 ${name}\n❤️ Trust ${Math.round(npc.trust)}/100 | 💢 Grudge ${Math.round(npc.grudge)}/100 | 🫀 Stress ${Math.round(npc.stress)}/100\n🛡️ ${npc.threatState} | 🧠 Bias ${npc.cognitiveBias} | 🔗 Attachment ${npc.attachmentStyle}\n🎭 Relationship: ${this.recalculateRelationshipTone(name)} | Respect ${Math.round(npc.respect)}/100 | Familiarity ${Math.round(npc.familiarity)}/100${npc.fear >= 25 ? ` | Fear ${Math.round(npc.fear)}/100` : ""}\n📍 Last seen: ${npc.lastSeenLocation || "Unknown"} (turn ${npc.lastSeenTurn || 0})`;
       if (this.enabled("RomanceEngine")) out += `\n💞 ${this.relationshipStage(npc.attraction)} (${Math.round(npc.attraction)}/100)`;
       if (uc) out += `\n🌊 ${uc.value >= 0 ? "Warmth" : "Tension"} with ${uc.target} (${uc.value})`;
       if (npc.memories.length) out += `\n🧠 Recent: ${npc.memories[npc.memories.length - 1]}`;
@@ -1898,13 +3690,33 @@ Use /help for commands or /settings for the current configuration.`;
       });
       return `🧹 Cleanup complete. Removed ${removed} obvious false-positive NPC entr${removed === 1 ? "y" : "ies"}.`;
     }
+    if (cmd === "scene") {
+      const names = this.sceneRosterNames();
+      const loc = state.emergence.currentLocation;
+      return names.length ? `🎬 SCENE — ${loc}\n${names.map(n => `• ${n} — ${this.recalculateRelationshipTone(n)}`).join("\n")}` : `🎬 SCENE — ${loc}\nNo NPCs are confidently present.`;
+    }
+    if (cmd === "memory") {
+      if (!arg) return "Usage: /memory NAME";
+      const name = this.findNpcByName(arg);
+      if (!name) return `🤖 NPC “${arg}” not found.`;
+      const npc = state.world.npcs[name];
+      const memories = npc.memoryLedger.slice(-10);
+      let out = `🧠 ${name} — STRUCTURED MEMORIES`;
+      if (!memories.length) out += "\nNo structured relationship memories yet.";
+      else out += "\n" + memories.map(m => `• T${m.turn} [${m.type}]${m.location && m.location !== "Unknown Location" ? ` @ ${m.location}` : ""}: ${m.text}`).join("\n");
+      const open = npc.commitments.filter(c => c.status === "open");
+      if (open.length) out += `\n\n🤝 OPEN PROMISES\n${open.map(c => `• ${c.text}`).join("\n")}`;
+      if (npc.boundaries.length) out += `\n\n🛑 RECORDED BOUNDARIES\n${npc.boundaries.slice(-4).map(b => `• ${b.text}`).join("\n")}`;
+      return out;
+    }
     if (cmd === "world") {
       const loc = state.world.locations[state.emergence.currentLocation];
       return `🌍 WORLD\n📍 ${state.emergence.currentLocation}${loc ? ` — ${loc.condition}, ${this.locationAtmosphere(loc)}` : ""}\n🔥 Tension ${Math.round(state.emergence.worldTension)}/100\n🫀 Player stress ${Math.round(state.playerInner.stress)}/100 | Composure ${Math.round(state.playerInner.composure)}/100 (${state.playerInner.condition})\n🎭 Genre ${this.activeGenre()}${state.emergence.config.Genre === "Auto" ? " (Auto)" : " (Manual)"}`;
     }
     if (cmd === "debug") {
       if (!this.enabled("DebugMode")) return "🧪 DebugMode is disabled in the config card.";
-      return `🧪 DEBUG\nTurn ${state.emergence.turnCount} | NPCs ${Object.keys(state.world.npcs).length} | Locations ${Object.keys(state.world.locations).length}\nCandidates ${Object.keys(state.emergence.nameCandidates).length}/${Object.keys(state.emergence.locationCandidates).length}\nDirty ${state.emergence.dirtyNpcs.length}/${state.emergence.dirtyLocations.length}\n${state.emergence.debugLog.slice(-8).join("\n") || "No logged errors."}`;
+      const lastError = state.emergence.lastError ? `\nLast hook error: ${state.emergence.lastError.hook} T${state.emergence.lastError.turn} — ${state.emergence.lastError.message}` : "";
+      return `🧪 DEBUG\nTurn ${state.emergence.turnCount} | NPCs ${Object.keys(state.world.npcs).length} | Locations ${Object.keys(state.world.locations).length}\nCandidates ${Object.keys(state.emergence.nameCandidates).length}/${Object.keys(state.emergence.locationCandidates).length}\nDirty ${state.emergence.dirtyNpcs.length}/${state.emergence.dirtyLocations.length}\n${this.expandedDiagnostics()}${lastError}\n${state.emergence.debugLog.slice(-8).join("\n") || "No logged errors."}`;
     }
     return null;
   }

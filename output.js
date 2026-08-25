@@ -37,6 +37,7 @@ const modifier = (text) => {
 
     return { text: visibleText };
   } catch (error) {
+    try { if (typeof EmergenceEngine !== "undefined") EmergenceEngine.reportHookError("Output", error); } catch (_) {}
     return { text: text && String(text).trim() ? text : "\u200B" };
   }
 };

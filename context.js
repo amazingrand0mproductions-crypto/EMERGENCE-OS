@@ -19,6 +19,7 @@ const modifier = (text) => {
     EmergenceEngine.installManagedFrontMemory();
     return { text: safeText };
   } catch (error) {
+    try { if (typeof EmergenceEngine !== "undefined") EmergenceEngine.reportHookError("Context", error); } catch (_) {}
     return { text };
   }
 };

@@ -33,6 +33,7 @@ const modifier = (text) => {
     }
     return { text: safeText || "\u200B" };
   } catch (error) {
+    try { if (typeof EmergenceEngine !== "undefined") EmergenceEngine.reportHookError("Input", error); } catch (_) {}
     return { text: text || "\u200B" };
   }
 };

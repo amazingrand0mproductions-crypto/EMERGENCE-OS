@@ -19,11 +19,11 @@ You play normally. EMERGENCE OS watches for confirmed characters, places and mea
 - **Tuning it?** Read **Configuration** or open the generated Config Story Card.
 - **Checking what it remembers?** Use `/help`, `/npc NAME`, `/world` or `/undercurrents`.
 - **Want the project/source?** https://github.com/amazingrand0mproductions-crypto/EMERGENCE-OS
-- **Testing changes locally?** Run `node test_harness.js`.
+- **Testing changes locally?** Run `node test_harness.js`. The current release contains **3,600+ lines in `library.js`** and **4,000+ total JavaScript lines including the hooks/test harness**; the additional code is primarily cached vocabulary, continuity/event handling, migration/repair logic and regression coverage rather than per-turn loops.
 
 ---
 
-## ✨ **What changed in this rebuild**
+## ✨ **What changed in this expanded rebuild**
 
 This is not a cosmetic cleanup of the old script. The tracking and card architecture has been rebuilt around safer attribution, current AI Dungeon scripting behaviour and lower false-positive risk.
 
@@ -96,7 +96,7 @@ EMERGENCE OS distinguishes between:
 
 A user-authored Character or Location card can be adopted for tracking without its lore being replaced. `/forget` removes an EMERGENCE-generated character card when appropriate, but deliberately preserves an adopted user card.
 
-Card creation is also compatibility-hardened for AI Dungeon sandboxes that return a Story Card object, an index/length, or `false` for a duplicate key.
+Card creation now follows AI Dungeon's documented `addStoryCard(keys, entry, type)` API and treats its returned index/`false` result correctly. Managed updates use `updateStoryCard(index, keys, entry, type)` when available, with a safe array-mutation fallback for compatibility.
 
 ### 🧠 **Your Author's Note stays yours**
 
@@ -116,7 +116,56 @@ Because AI Dungeon includes Front Memory in full, the EMERGENCE block is deliber
 
 ### 🔁 **Retry / duplicate-mutation protection**
 
-Output mutations are keyed to the current AI Dungeon action count plus the visible response. Re-processing the same output for the same action no longer doubles a grudge, attraction gain or other event.
+Output mutations are keyed to the current AI Dungeon action count plus the player-input/output fingerprint. Re-processing the same generation for the same action no longer doubles a grudge, attraction gain, promise, memory or other event.
+
+### 🎬 **Scene Continuity**
+
+The engine now keeps a short, location-aware **scene roster**.
+
+An NPC can remain present through a quiet paragraph without needing their name repeated every sentence. Explicit departures remove them immediately. Quoted recollections are excluded from witness checks, so *“Marcus told me yesterday…”* is not treated as Marcus standing in the room.
+
+`PresencePersistence` controls how long quiet characters remain present. `/scene` shows the current roster.
+
+### 🧠 **Structured Relationship Memory**
+
+The old rolling memory list remains deliberately small, but each NPC can now also keep a bounded, salience-aware **memory ledger**.
+
+It records meaningful relationship events with:
+
+- turn number
+- location
+- event type
+- a short grounded excerpt
+- salience
+- source
+
+`MemoryDepth` controls how much is retained. High-salience entries survive compaction preferentially. `/memory NAME` shows the ledger, open promises and recorded boundaries.
+
+### 🤝 **Nuanced Relationship Events**
+
+The core Trust/Grudge engine is still the foundation. The expansion adds a second, lighter semantic layer for events that should not all feel identical:
+
+**apologies • gratitude • promises • forgiveness • rescue • comfort • gifts • rejection • abandonment • boundaries • boundary violations • confessions • secrets • threats**
+
+These events feed the same relationship state instead of creating a separate minigame. They can adjust Trust, Grudge, Respect, Fear, Familiarity or Attraction in bounded amounts and create structured memories when appropriate.
+
+### 🪪 **Aliases without duplicate people**
+
+Confirmed full names can safely teach unambiguous aliases. `Jonathan Cross` may later resolve from `Jonathan`; two different Jonathans make that alias ambiguous instead of merging them.
+
+The detector also excludes player-controlled names exposed by AI Dungeon's `info.characterNames` and uses a much broader object/vehicle/meta vocabulary, reducing false NPCs from named vehicles, equipment, dates, UI terms and ordinary scene nouns.
+
+### 🧹 **Self-repair & bounded state**
+
+Every few turns EMERGENCE OS can perform a small repair pass:
+
+- clamp corrupted stats
+- remove orphaned NPC↔NPC references
+- remove aliases whose target no longer exists
+- expire stale character/location candidates
+- prune bounded event/scene/debug history
+
+It does **not** delete valid NPCs or user-authored lore. The larger codebase is deliberately lazy/cached because AI Dungeon currently gives each script hook a 2-second timeout and 16 MB sandbox.
 
 ---
 
@@ -143,7 +192,7 @@ Every confirmed NPC can track separate **Trust** and **Grudge** values.
 
 Targeted respectful actions can build trust and soften resentment. Coercion damages trust. Betrayal hits harder and can create a **Formative Memory** when it becomes a defining relationship fracture.
 
-Recent memories keep a short excerpt of the actual incident instead of storing only a vague label.
+Recent memories keep a short excerpt of the actual incident instead of storing only a vague label. The expanded structured ledger keeps higher-salience relationship moments separately so short rolling memory can stay fast.
 
 **ConsequenceSeverity:** Mild · Moderate · Hardcore
 
@@ -344,6 +393,8 @@ The Entry is deliberately compact and remains well below AI Dungeon's 2,000-char
 | `RELEASE_NOTES.md` | Rebuild changes + upgrade notes |
 | `test_harness.js` | Local regression harness; **do not paste into AI Dungeon** |
 | `README.md` | Full documentation, systems, config and research notes |
+| `RELEASE_NOTES.md` | Expanded-build changes and validation notes |
+| `TEST_RESULTS.txt` | Syntax/regression/stress validation summary |
 
 ---
 
