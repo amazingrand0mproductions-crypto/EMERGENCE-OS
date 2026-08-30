@@ -9,8 +9,15 @@ class EmergenceEngine {
   // CORE / MIGRATION
   // ---------------------------------------------------------------------------
   static init() {
+    // Library code is evaluated fresh for each AI Dungeon hook, but many helper
+    // methods call init() defensively inside the same hook. Guard repeated work
+    // within that sandbox invocation; the flag resets automatically next hook.
+    if (this._initDone) return;
+    this._initDone = true;
+
     if (!state.emergence || typeof state.emergence !== "object") state.emergence = {};
     const e = state.emergence;
+    const incomingSchemaVersion = Number(e.schemaVersion || 0);
 
     if (!e.config || typeof e.config !== "object") e.config = {};
     const defaults = {
@@ -109,13 +116,46 @@ class EmergenceEngine {
     if (!e.runtimeStats || typeof e.runtimeStats !== "object" || Array.isArray(e.runtimeStats)) {
       e.runtimeStats = { repairs: 0, prunedCandidates: 0, prunedEvents: 0, lastRepairTurn: -1, lastSceneTurn: -1 };
     }
-    if (!e.schemaVersion || e.schemaVersion < 3) e.schemaVersion = 3;
+    if (!e.schemaVersion || e.schemaVersion < 4) e.schemaVersion = 4;
     if (e.initialized === undefined) e.initialized = false;
-    if (e.isCommandTurn === undefined) e.isCommandTurn = false;
 
-    // Migrate old NPC state into the safer schema. Nothing established is thrown away.
-    Object.keys(state.world.npcs).forEach(name => this.normalizeNpc(name));
-    Object.keys(state.world.locations).forEach(name => this.normalizeLocation(name));
+    // Command handling used to depend on two loose fields (isCommandTurn +
+    // commandOutput). If an Output hook was skipped/timed out, those fields could
+    // survive into later turns and poison the command lifecycle. Commands now use
+    // a single short-lived transaction packet that is replaced on every Input.
+    if (e.commandSequence === undefined) e.commandSequence = 0;
+    if (!e.commandStats || typeof e.commandStats !== "object" || Array.isArray(e.commandStats)) {
+      e.commandStats = {
+        recognized: 0, unknown: 0, consumed: 0, staleClears: 0,
+        raw: 0, do: 0, say: 0, thirdPerson: 0, quoted: 0
+      };
+    }
+    if (e.pendingCommand && (typeof e.pendingCommand !== "object" || Array.isArray(e.pendingCommand))) {
+      e.pendingCommand = null;
+    }
+    if (e.isCommandTurn === undefined) e.isCommandTurn = false;
+    // Old builds could leave commandOutput behind indefinitely. Never migrate
+    // that stale payload into the new transaction system.
+    if (e.commandOutput !== undefined) e.commandOutput = null;
+    if (!e.pendingCommand) e.isCommandTurn = false;
+
+    // Full object normalization is needed on schema migration and whenever the
+    // tracked entity counts change. Older builds normalized every NPC/location in
+    // every hook, three times per turn; safe, but increasingly wasteful in long
+    // adventures. Periodic StateRepair still catches malformed state.
+    const npcCount = Object.keys(state.world.npcs).length;
+    const locationCount = Object.keys(state.world.locations).length;
+    const needsNormalization =
+      incomingSchemaVersion < 4 ||
+      e.normalizedNpcCount !== npcCount ||
+      e.normalizedLocationCount !== locationCount;
+
+    if (needsNormalization) {
+      Object.keys(state.world.npcs).forEach(name => this.normalizeNpc(name));
+      Object.keys(state.world.locations).forEach(name => this.normalizeLocation(name));
+      e.normalizedNpcCount = Object.keys(state.world.npcs).length;
+      e.normalizedLocationCount = Object.keys(state.world.locations).length;
+    }
   }
 
   static normalizeNpc(name) {
@@ -3556,15 +3596,164 @@ Can Could Would Should Will Shall May Might Must Do Does Did Done Have Has Had I
   // ---------------------------------------------------------------------------
   // COMMANDS
   // ---------------------------------------------------------------------------
+  static commandNames() {
+    if (!this._commandNames) {
+      this._commandNames = [
+        "help", "about", "settings", "locations", "loc", "cleanup", "forget",
+        "undercurrents", "drives", "threads", "factions", "reputation",
+        "reflections", "thoughts", "romance", "card", "npcs", "npc", "world",
+        "memory", "scene", "debug"
+      ];
+    }
+    return this._commandNames;
+  }
+
+  static isKnownCommand(name) {
+    const n = String(name || "").toLowerCase();
+    return this.commandNames().indexOf(n) !== -1;
+  }
+
+  static commandActorPattern() {
+    // Do mode normally prefixes "You"; third-person mode can replace that with a
+    // proper name. Keep this intentionally conservative so ordinary story prose
+    // containing a slash is never swallowed as a command.
+    return "(?:You|I|[A-Z][A-Za-z0-9'’_-]*(?:\\\\s+[A-Z][A-Za-z0-9'’_-]*){0,3})";
+  }
+
+  static commandCandidates(raw) {
+    const original = String(raw || "").replace(/\r/g, "").trim();
+    if (!original) return [];
+
+    const candidates = [];
+    const push = (value, mode) => {
+      const v = String(value || "").trim();
+      if (!v || v.charAt(0) !== "/") return;
+      if (!candidates.some(c => c.text === v)) candidates.push({ text: v, mode });
+    };
+
+    // Story mode / raw slash input.
+    push(original, "raw");
+
+    // A user may manually quote a command in Story mode.
+    const quoted = original.match(/^["“']\s*(\/[\s\S]*?)\s*["”']\s*[.!?]?\s*$/);
+    if (quoted) push(quoted[1], "quoted");
+
+    // Do / Say inputs arrive with a leading action marker. AI Dungeon can use
+    // "You" or a third-person proper name as the acting subject.
+    const body = original.replace(/^\s*>\s*/, "").trim();
+    if (body !== original) {
+      push(body, "raw");
+
+      const doMatch = body.match(/^(?:You|I|[A-Z][A-Za-z0-9'’_-]*(?:\s+[A-Z][A-Za-z0-9'’_-]*){0,3})\s+(\/[\s\S]*)$/);
+      if (doMatch) {
+        const third = !/^(?:You|I)\b/i.test(body);
+        push(doMatch[1], third ? "thirdPerson" : "do");
+      }
+
+      const sayMatch = body.match(/^(?:You|I|[A-Z][A-Za-z0-9'’_-]*(?:\s+[A-Z][A-Za-z0-9'’_-]*){0,3})\s+(?:say|says|said)\s*,?\s*["“']\s*(\/[\s\S]*?)\s*["”']\s*[.!?]?\s*$/i);
+      if (sayMatch) {
+        const third = !/^(?:You|I)\b/i.test(body);
+        push(sayMatch[1], third ? "thirdPerson" : "say");
+      }
+    }
+
+    return candidates;
+  }
+
   static parseCommandInput(raw) {
-    const s = String(raw || "").trim();
-    // AI Dungeon can wrap actions; allow a leading > and optional quote, but the
-    // slash command still has to be the first meaningful token.
-    const cleaned = s.replace(/^>\s*/, "").replace(/^['"“”]+/, "").trim();
-    const m = cleaned.match(/^\/(help|about|settings|locations|loc|cleanup|forget|undercurrents|drives|threads|factions|reputation|reflections|thoughts|romance|card|npcs|npc|world|memory|scene|debug)\b(?:\s+([^\n]*))?$/i);
-    if (m) return { command: m[1].toLowerCase(), arg: this.cleanName(m[2] || "") };
-    if (/^\/[A-Za-z]/.test(cleaned)) return { command: "__unknown__", arg: "" };
+    const candidates = this.commandCandidates(raw);
+    if (!candidates.length) return null;
+
+    for (let i = 0; i < candidates.length; i++) {
+      let payload = candidates[i].text
+        .replace(/\s*[\"”']\s*[.!?]?\s*$/, "")
+        .replace(/[.!?]+\s*$/, "")
+        .trim();
+
+      const m = payload.match(/^\/([A-Za-z][A-Za-z0-9_-]*)(?:\s+([\s\S]*?))?\s*$/);
+      if (!m) continue;
+
+      const name = m[1].toLowerCase();
+      const arg = this.cleanName(m[2] || "");
+      return {
+        command: this.isKnownCommand(name) ? name : "__unknown__",
+        requestedCommand: name,
+        arg,
+        wrapperMode: candidates[i].mode,
+        raw: String(raw || "")
+      };
+    }
     return null;
+  }
+
+  static clearPendingCommand(reason) {
+    const e = state && state.emergence;
+    if (!e) return;
+    if (e.pendingCommand) {
+      if (e.commandStats && reason !== "consumed") {
+        e.commandStats.staleClears = (e.commandStats.staleClears || 0) + 1;
+      }
+      e.pendingCommand = null;
+    }
+    e.commandOutput = null; // legacy cleanup
+    e.isCommandTurn = false;
+  }
+
+  static beginCommand(parsed) {
+    if (!parsed) return null;
+    this.clearPendingCommand("replaced");
+    const e = state.emergence;
+    const output = this.processCommand(parsed) || "⚙️ EMERGENCE OS command completed.";
+    e.commandSequence = (e.commandSequence || 0) + 1;
+
+    const action = this.actionCount();
+    const packet = {
+      id: `eos-cmd:${action}:${e.commandSequence}:${this.hashText(parsed.raw || parsed.command)}`,
+      action,
+      command: parsed.command,
+      requestedCommand: parsed.requestedCommand || parsed.command,
+      arg: parsed.arg || "",
+      wrapperMode: parsed.wrapperMode || "raw",
+      output: String(output || ""),
+      createdTurn: e.turnCount || action
+    };
+    e.pendingCommand = packet;
+    e.isCommandTurn = true;
+
+    if (e.commandStats) {
+      if (parsed.command === "__unknown__") e.commandStats.unknown = (e.commandStats.unknown || 0) + 1;
+      else e.commandStats.recognized = (e.commandStats.recognized || 0) + 1;
+      const mode = packet.wrapperMode;
+      if (e.commandStats[mode] !== undefined) e.commandStats[mode]++;
+    }
+    return packet;
+  }
+
+  static hasPendingCommand() {
+    return !!(state && state.emergence && state.emergence.pendingCommand);
+  }
+
+  static commandContextText() {
+    const p = state && state.emergence ? state.emergence.pendingCommand : null;
+    const id = p && p.id ? p.id : "eos-command";
+    // Current AI Dungeon cannot safely stop generation from onInput without an
+    // error. Give the model a tiny isolated context instead. Output will replace
+    // the model's placeholder with the command result.
+    return `[EMERGENCE OS INTERNAL COMMAND ${id}]\\nDo not continue the story. Return exactly: [EOS_COMMAND_PENDING]`;
+  }
+
+  static consumePendingCommand() {
+    const e = state && state.emergence;
+    if (!e || !e.pendingCommand) return null;
+    const p = e.pendingCommand;
+    const out = String(p.output || "⚙️ EMERGENCE OS command completed.");
+    e.lastCommand = {
+      id: p.id, action: p.action, command: p.requestedCommand || p.command,
+      wrapperMode: p.wrapperMode, consumedAt: this.actionCount()
+    };
+    if (e.commandStats) e.commandStats.consumed = (e.commandStats.consumed || 0) + 1;
+    this.clearPendingCommand("consumed");
+    return out;
   }
 
   static processCommand(parsed) {
@@ -3716,7 +3905,12 @@ Use /help for commands or /settings for the current configuration.`;
     if (cmd === "debug") {
       if (!this.enabled("DebugMode")) return "🧪 DebugMode is disabled in the config card.";
       const lastError = state.emergence.lastError ? `\nLast hook error: ${state.emergence.lastError.hook} T${state.emergence.lastError.turn} — ${state.emergence.lastError.message}` : "";
-      return `🧪 DEBUG\nTurn ${state.emergence.turnCount} | NPCs ${Object.keys(state.world.npcs).length} | Locations ${Object.keys(state.world.locations).length}\nCandidates ${Object.keys(state.emergence.nameCandidates).length}/${Object.keys(state.emergence.locationCandidates).length}\nDirty ${state.emergence.dirtyNpcs.length}/${state.emergence.dirtyLocations.length}\n${this.expandedDiagnostics()}${lastError}\n${state.emergence.debugLog.slice(-8).join("\n") || "No logged errors."}`;
+      const cs = state.emergence.commandStats || {};
+      const lastCmd = state.emergence.lastCommand
+        ? `\nLast command: /${state.emergence.lastCommand.command} via ${state.emergence.lastCommand.wrapperMode} @ action ${state.emergence.lastCommand.action}`
+        : "";
+      const cmdLine = `Commands recognized/consumed/unknown/stale: ${cs.recognized || 0}/${cs.consumed || 0}/${cs.unknown || 0}/${cs.staleClears || 0}`;
+      return `🧪 DEBUG\nTurn ${state.emergence.turnCount} | NPCs ${Object.keys(state.world.npcs).length} | Locations ${Object.keys(state.world.locations).length}\nCandidates ${Object.keys(state.emergence.nameCandidates).length}/${Object.keys(state.emergence.locationCandidates).length}\nDirty ${state.emergence.dirtyNpcs.length}/${state.emergence.dirtyLocations.length}\n${cmdLine}${lastCmd}\n${this.expandedDiagnostics()}${lastError}\n${state.emergence.debugLog.slice(-8).join("\n") || "No logged errors."}`;
     }
     return null;
   }

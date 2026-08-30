@@ -1,19 +1,19 @@
 // EMERGENCE OS — Output Modifier
 const modifier = (text) => {
   try {
-    EmergenceEngine.init();
-
-    if (state.emergence.commandOutput) {
-      const out = state.emergence.commandOutput;
-      state.emergence.commandOutput = null;
-      state.emergence.isCommandTurn = false;
+    // Fast-path command consumption before full world normalization. This makes
+    // command response time essentially independent of NPC/location count.
+    if (state && state.emergence && state.emergence.pendingCommand) {
+      const out = EmergenceEngine.consumePendingCommand();
       return { text: out || "\u200B" };
     }
 
+    EmergenceEngine.init();
+
     let visibleText = text || "";
 
-    // Strip all hidden data blocks before any event/entity detection so hidden
-    // helper data can never become a fake story event, character, or location.
+    // Strip all hidden data blocks before event/entity detection so hidden helper
+    // data can never become a fake story event, character, or location.
     const profiles = EmergenceEngine.extractAllTags(visibleText, "EOS_PROFILE");
     visibleText = profiles.text;
     profiles.blocks.forEach(block => EmergenceEngine.applyProfileFill(EmergenceEngine.parseTagFields(block)));
@@ -25,6 +25,12 @@ const modifier = (text) => {
       const data = EmergenceEngine.parseTagFields(block);
       if (data.name && data.text) EmergenceEngine.appendReflection(data.name, data.text);
     });
+
+    // Defensive fallback: if the model somehow leaks our command placeholder
+    // without a surviving packet, never let it become story/history.
+    if (/^\s*\[EOS_COMMAND_PENDING\]\s*$/i.test(visibleText)) {
+      visibleText = "⚙️ EMERGENCE OS command transaction expired. Re-enter the command.";
+    }
 
     if (!visibleText.trim()) visibleText = "\u200B";
 

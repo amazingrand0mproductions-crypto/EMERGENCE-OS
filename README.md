@@ -366,6 +366,8 @@ The Entry is deliberately compact and remains well below AI Dungeon's 2,000-char
 | `/locations` | All tracked locations |
 | `/loc NAME` | Set/create current location |
 | `/world` | Location, tension, player stress and genre |
+| `/scene` | Current location-aware scene roster |
+| `/memory NAME` | Structured memories, open promises and boundaries |
 | `/romance [NAME]` | Romantic standing |
 | `/undercurrents` | NPC-to-NPC dynamics + recent social signals |
 | `/factions` | Mutual coalitions/rivalry triangles |
@@ -375,7 +377,25 @@ The Entry is deliberately compact and remains well below AI Dungeon's 2,000-char
 | `/cleanup` | Remove obvious object/location false positives |
 | `/debug` | Diagnostics when DebugMode is enabled |
 
-> **Command limitation:** commands are intercepted so the generated story prose is replaced by the command result. AI Dungeon's scripting hooks do not currently provide a reliable “return Output without invoking the normal model pipeline” mechanism, so the README no longer claims commands are literally free model turns.
+### 🛡️ **Command reliability**
+
+Commands are now handled as short-lived transactions instead of a loose boolean flag.
+
+They are recognized in the current AI Dungeon input shapes used by **Story**, **Do**, **Say**, and third-person play. These all resolve to the same command:
+
+```text
+/world
+> You /world
+> You say, "/world"
+> Kyle /world
+> Kyle says, "/world"
+```
+
+Every new Input clears any unfinished command packet before it does normal story work. That means an interrupted generation, retry, edit, or skipped Output hook cannot leave EMERGENCE OS permanently stuck in “command mode”.
+
+On a command turn, Context is replaced with a tiny isolated command instruction instead of sending the full adventure context to the model. Output then consumes the command packet **before full world normalization**, keeping command handling fast even in large adventures. Unknown slash commands are intercepted too, so a typo gets a clear EMERGENCE response instead of becoming story prose.
+
+> **Platform limitation:** AI Dungeon's current scripting documentation says `stop: true` in `onInput` produces an error. EMERGENCE OS therefore still allows the model call to occur, but isolates it from the story and replaces its output with the command result. Commands are not advertised as model-free turns.
 
 ---
 
@@ -390,7 +410,6 @@ The Entry is deliberately compact and remains well below AI Dungeon's 2,000-char
 | `SCENARIO_DESCRIPTION.md` | Ready-to-paste AI Dungeon scenario description |
 | `QUICK_START.md` | Short installation/config reference |
 | `PACKAGE_CONTENTS.md` | Package map / paste-vs-test reference |
-| `RELEASE_NOTES.md` | Rebuild changes + upgrade notes |
 | `test_harness.js` | Local regression harness; **do not paste into AI Dungeon** |
 | `README.md` | Full documentation, systems, config and research notes |
 | `RELEASE_NOTES.md` | Expanded-build changes and validation notes |
@@ -534,6 +553,8 @@ No regex/state script can perfectly understand unrestricted prose.
 EMERGENCE OS deliberately prefers **missing an uncertain event** over confidently assigning a kiss, betrayal or insult to the wrong person. For unusual naming styles or deliberately ambiguous prose, use the config card's `[CHARACTERS]` section or `/card NAME` to confirm somebody manually.
 
 The narrator/model still has the final say over generated prose. The script can provide state and strong guidance; it cannot guarantee perfect compliance from every AI model.
+
+Command parsing intentionally only treats a slash as a command when it appears in a recognized player-input wrapper. A character saying `"/world"` inside ordinary generated story prose will not be consumed as a player command.
 
 ---
 
